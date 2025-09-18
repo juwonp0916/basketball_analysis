@@ -1,0 +1,162 @@
+{
+  "dataset_name": "Basketball Individual Analytics Dataset",
+  "version": "1.0.0",
+  "description": "Comprehensive basketball video dataset for individual player tracking and analytics with moving camera support",
+  "creation_date": "2024-01-01",
+  "last_updated": "2024-01-01",
+
+  "collection_targets": {
+    "total_videos": 100,
+    "fixed_camera_videos": 30,
+    "moving_camera_videos": 70,
+    "target_hours": 100,
+    "completion_status": "in_progress"
+  },
+
+  "data_categories": {
+    "fixed_camera": {
+      "description": "Videos from stationary cameras",
+      "target_count": 30,
+      "current_count": 0,
+      "subcategories": ["professional", "college", "amateur"]
+    },
+    "moving_camera": {
+      "description": "Videos with camera movement",
+      "target_count": 70,
+      "current_count": 0,
+      "subcategories": {
+        "broadcast": {
+          "description": "Professional broadcast footage",
+          "target_count": 20,
+          "current_count": 0
+        },
+        "handheld": {
+          "description": "Handheld camera recordings",
+          "target_count": 30,
+          "current_count": 0
+        },
+        "drone": {
+          "description": "Aerial drone footage",
+          "target_count": 20,
+          "current_count": 0
+        }
+      }
+    }
+  },
+
+  "annotation_schema": {
+    "player_detection": {
+      "bbox_format": "pascal_voc",
+      "attributes": ["player_id", "team_id", "jersey_number", "confidence"],
+      "annotation_frequency": "every_15_frames"
+    },
+    "court_keypoints": {
+      "keypoint_count": 14,
+      "format": "xy_coordinates",
+      "visibility_flag": true,
+      "annotation_frequency": "every_30_frames"
+    },
+    "action_recognition": {
+      "action_types": ["shoot", "pass", "dribble", "defend", "rebound", "steal", "block", "assist", "turnover", "foul"],
+      "temporal_format": "start_end_frames",
+      "player_association": "required"
+    },
+    "player_tracking": {
+      "track_id_consistency": "required",
+      "re_identification": "jersey_number_and_features",
+      "team_assignment": "color_based_and_court_side"
+    }
+  },
+
+  "quality_standards": {
+    "video_requirements": {
+      "min_resolution": [720, 1280],
+      "min_fps": 24,
+      "min_duration_seconds": 60,
+      "max_duration_seconds": 3600,
+      "supported_formats": [".mp4", ".avi", ".mov"]
+    },
+    "content_requirements": {
+      "court_visibility": "at_least_50_percent",
+      "player_visibility": "clear_identification_possible",
+      "lighting_quality": "sufficient_for_analysis",
+      "motion_blur": "minimal_acceptable"
+    },
+    "annotation_quality": {
+      "bbox_accuracy": "tight_fitting",
+      "temporal_consistency": "required",
+      "label_completeness": "all_visible_players",
+      "quality_control": "peer_review_required"
+    }
+  },
+
+  "file_organization": {
+    "raw_videos": {
+      "fixed_camera": "data/raw_videos/fixed_camera/",
+      "moving_camera": {
+        "broadcast": "data/raw_videos/moving_camera/broadcast/",
+        "handheld": "data/raw_videos/moving_camera/handheld/",
+        "drone": "data/raw_videos/moving_camera/drone/"
+      }
+    },
+    "processed_data": {
+      "frames": "data/processed/frames/",
+      "tracks": "data/processed/tracks/",
+      "statistics": "data/processed/statistics/"
+    },
+    "annotations": {
+      "player_boxes": "data/annotations/player_boxes/",
+      "court_keypoints": "data/annotations/court_keypoints/",
+      "actions": "data/annotations/actions/",
+      "player_ids": "data/annotations/player_ids/"
+    },
+    "metadata": "data/metadata/"
+  },
+
+  "progress_tracking": {
+    "data_collection": {
+      "status": "in_progress",
+      "completion_percentage": 0,
+      "next_milestone": "collect_first_10_videos"
+    },
+    "annotation": {
+      "status": "pending",
+      "completion_percentage": 0,
+      "next_milestone": "setup_annotation_team"
+    },
+    "validation": {
+      "status": "pending",
+      "completion_percentage": 0,
+      "next_milestone": "create_validation_pipeline"
+    }
+  },
+
+  "contributors": {
+    "primary_researcher": "HKUST FYP Student",
+    "supervisor": "Project Supervisor",
+    "annotation_team": [],
+    "quality_reviewers": []
+  },
+
+  "tools_and_platforms": {
+    "annotation_tools": ["CVAT", "LabelImg", "Custom Tools"],
+    "video_processing": ["OpenCV", "FFmpeg"],
+    "data_management": ["Custom Python Scripts"],
+    "quality_control": ["Automated Validation", "Manual Review"]
+  },
+
+  "research_applications": {
+    "primary_goals": [
+      "Moving camera basketball analytics",
+      "Individual player tracking and statistics",
+      "Action recognition for basketball players",
+      "Court calibration and homography estimation"
+    ],
+    "potential_extensions": [
+      "Real-time analysis system",
+      "Multi-sport adaptation",
+      "Tactical analysis features",
+      "Performance prediction models"
+    ]
+  }
+}

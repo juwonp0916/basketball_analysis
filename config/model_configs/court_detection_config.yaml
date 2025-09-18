@@ -1,0 +1,71 @@
+# Court Detection Model Configuration
+
+model:
+  name: "court_detector"
+  type: "keypoint_detection"
+  backbone: "resnet50"
+
+  # Input specifications
+  input:
+    image_size: [640, 640]
+    channels: 3
+    normalize: true
+    mean: [0.485, 0.456, 0.406]
+    std: [0.229, 0.224, 0.225]
+
+  # Model architecture
+  architecture:
+    backbone_pretrained: true
+    fpn_layers: [2, 3, 4, 5]
+    keypoint_head:
+      hidden_dim: 256
+      num_layers: 3
+      dropout: 0.1
+
+  # Keypoints to detect
+  keypoints:
+    num_keypoints: 14
+    names:
+      - "center_circle"
+      - "free_throw_circle_left"
+      - "free_throw_circle_right"
+      - "three_point_arc_left_1"
+      - "three_point_arc_left_2"
+      - "three_point_arc_left_3"
+      - "three_point_arc_right_1"
+      - "three_point_arc_right_2"
+      - "three_point_arc_right_3"
+      - "baseline_left_corner"
+      - "baseline_right_corner"
+      - "sideline_left_corner"
+      - "sideline_right_corner"
+      - "halfcourt_line_center"
+
+# Training configuration
+training:
+  epochs: 100
+  batch_size: 16
+  learning_rate: 0.001
+  optimizer: "adamw"
+  scheduler: "cosine"
+  weight_decay: 0.01
+
+  # Loss configuration
+  loss:
+    keypoint_loss_weight: 1.0
+    visibility_loss_weight: 0.5
+    heatmap_loss_type: "mse"
+
+  # Data augmentation
+  augmentation:
+    random_rotation: 15
+    random_scale: [0.8, 1.2]
+    random_translation: 0.1
+    color_jitter: 0.2
+    gaussian_blur: 0.1
+
+# Inference configuration
+inference:
+  confidence_threshold: 0.3
+  nms_threshold: 0.5
+  max_detections: 1  # Only one court per image
