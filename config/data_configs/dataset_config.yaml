@@ -1,0 +1,67 @@
+# Dataset Configuration
+dataset:
+  name: "basketball_individual_analytics"
+  version: "v1.0"
+
+  # Data paths
+  raw_videos:
+    fixed_camera: "data/raw_videos/fixed_camera"
+    moving_camera:
+      broadcast: "data/raw_videos/moving_camera/broadcast"
+      handheld: "data/raw_videos/moving_camera/handheld"
+      drone: "data/raw_videos/moving_camera/drone"
+
+  annotations:
+    player_boxes: "data/annotations/player_boxes"
+    court_keypoints: "data/annotations/court_keypoints"
+    actions: "data/annotations/actions"
+    player_ids: "data/annotations/player_ids"
+
+  processed:
+    frames: "data/processed/frames"
+    tracks: "data/processed/tracks"
+    statistics: "data/processed/statistics"
+
+  metadata: "data/metadata"
+
+# Data quality requirements
+quality:
+  min_resolution: [720, 1280]  # height, width
+  min_fps: 24
+  max_video_length: 3600  # seconds (1 hour)
+  min_video_length: 60    # seconds (1 minute)
+
+# Annotation requirements
+annotation:
+  player_box_frequency: 15  # annotate every N frames
+  court_keypoint_frequency: 30  # annotate every N frames
+  action_segment_min_length: 10  # frames
+  action_segment_max_length: 150  # frames
+
+# Basketball court specifications
+court:
+  # NBA court dimensions in feet
+  length: 94
+  width: 50
+  # Key court landmarks
+  keypoints:
+    - "center_circle"
+    - "free_throw_line_left"
+    - "free_throw_line_right"
+    - "three_point_line_left"
+    - "three_point_line_right"
+    - "baseline_left"
+    - "baseline_right"
+    - "sideline_top"
+    - "sideline_bottom"
+
+# Data collection targets
+targets:
+  total_videos: 100
+  fixed_camera_videos: 30
+  moving_camera_videos: 70
+  total_hours: 100
+  games_per_type:
+    professional: 20
+    college: 30
+    amateur: 50
