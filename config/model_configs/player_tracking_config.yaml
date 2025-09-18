@@ -1,0 +1,89 @@
+# Player Tracking Model Configuration
+
+detection:
+  model_name: "yolov8x"
+  model_path: "models/pretrained/yolov8x.pt"
+
+  # Detection parameters
+  confidence_threshold: 0.5
+  iou_threshold: 0.45
+  max_detections: 20
+
+  # Input specifications
+  input_size: [640, 640]
+  device: "cuda"  # or "cpu"
+
+tracking:
+  tracker_type: "bytetrack"  # or "deepsort"
+
+  # ByteTrack parameters
+  bytetrack:
+    track_thresh: 0.6
+    track_buffer: 30
+    match_thresh: 0.8
+    frame_rate: 30
+
+  # DeepSORT parameters (alternative)
+  deepsort:
+    max_dist: 0.2
+    min_confidence: 0.3
+    nms_max_overlap: 1.0
+    max_iou_distance: 0.7
+    max_age: 70
+    n_init: 3
+
+re_identification:
+  model_type: "osnet"
+  model_path: "models/pretrained/osnet_x1_0.pth"
+
+  # Feature extraction
+  feature_dim: 512
+  input_size: [256, 128]  # height, width
+
+  # Matching parameters
+  similarity_threshold: 0.7
+  temporal_window: 30  # frames to consider for re-id
+
+jersey_detection:
+  # OCR for jersey numbers
+  ocr_engine: "easyocr"
+  languages: ["en"]
+
+  # Jersey detection parameters
+  jersey_roi_scale: 0.3  # fraction of player bbox for jersey region
+  confidence_threshold: 0.6
+
+  # Number validation
+  valid_numbers: [0, 99]  # range of valid jersey numbers
+  team_colors:
+    - ["red", "white"]
+    - ["blue", "yellow"]
+    - ["black", "white"]
+
+team_classification:
+  method: "jersey_color"  # or "court_side"
+
+  # Color-based classification
+  color_clustering:
+    n_clusters: 2
+    color_space: "hsv"
+
+  # Court-side based classification
+  court_side:
+    temporal_consistency: 10  # frames to average
+    switching_threshold: 0.8
+
+# Post-processing
+post_processing:
+  # Trajectory smoothing
+  smoothing:
+    enabled: true
+    window_size: 5
+    method: "kalman"  # or "moving_average"
+
+  # Identity consistency
+  identity_linking:
+    enabled: true
+    temporal_gap_threshold: 30  # frames
+    spatial_distance_threshold: 100  # pixels
+    feature_similarity_threshold: 0.8
