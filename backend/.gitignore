@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+.python-version
+
+# FastAPI specific
+.mypy_cache/
+.ruff_cache/
+.vscode/
+
+# Editor/IDE files
+.idea/
+.DS_Store
+*.sublime-project
+*.sublime-workspace
+
+# Logs and temporary files
+*.log
+tmp/

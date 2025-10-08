@@ -1,8 +1,16 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
+  import { createPeerConnection, sendOffer } from "$lib/webrtc_utils";
+  import RadialChart from "$lib/components/RadialChart.svelte";
+  import Button from "$lib/components/ui/button/button.svelte";
+
+  // TODO: Load data from backend
+  const data1 = { player: "1e3db", shots_succs: 50, total_shots: 200, color: "var(--color-safari)" };
+  const data2 = { player: "1e3dc", shots_succs: 120, total_shots: 200, color: "var(--color-safari)" };
+  const data3 = { player: "1e3dd", shots_succs: 160, total_shots: 200, color: "var(--color-safari)" };
 
   let videoElement: HTMLVideoElement | null = null;
-  let stream: MediaStream | null = null;
+  let stream = $state<MediaStream | null>(null);
 
   let pc: RTCPeerConnection | null = null;
 
@@ -15,6 +23,8 @@
         },
         audio: false,
       };
+
+      console.log(videoElement);
 
       stream = await navigator.mediaDevices.getUserMedia(constraints);
 
@@ -35,50 +45,47 @@
     }
   }
 
+  // TOOD: Create analysis event handling
   async function startAnalysis() {
     if (!stream) {
       alert("Please start the camera first.");
       return;
     }
 
-    pc = new RTCPeerConnection({
-      iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-    });
+    try {
+      pc = createPeerConnection();
 
-    stream.getTracks().forEach((track) => pc?.addTrack(track, stream!));
+      stream.getTracks().forEach((track) => pc?.addTrack(track, stream!));
 
-    pc.ondatachannel = (event) => {
-      const channel = event.channel;
-      if (channel.label === "analytics") {
-        console.log("Analytics data channel received!");
+      pc.ondatachannel = (event) => {
+        const channel = event.channel;
+        if (channel.label === "analytics") {
+          console.log("Analytics data channel received!");
 
-        channel.onmessage = (event) => {
-          const data = JSON.parse(event.data);
-          console.log("Received analytics:", data);
-          // TODO: Update UI with received data
-        };
+          channel.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            console.log("Received analytics: ", data);
+            // TODO: Update UI with received data
+          };
 
-        channel.onopen = () => console.log("Analytics channel opened.");
-        channel.onclose = () => console.log("Analytics channel closed.");
-      }
-    };
+          channel.onopen = () => console.log("Analytics channel opened.");
+          channel.onclose = () => console.log("Analytics channel closed.");
+        }
+      };
 
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
 
-    // TODO: Update base url with env variables
-    const response = await fetch("http://127.0.0.1:8000/offer", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(pc.localDescription),
-    });
+      // TODO: Update server url with env variables
+      const answer = await sendOffer(pc, "http://127.0.0.1:8000/offer");
 
-    const answer = await response.json();
-    await pc.setRemoteDescription(new RTCSessionDescription(answer));
+      await pc.setRemoteDescription(new RTCSessionDescription(answer));
 
-    console.log("WebRTC connection established!");
+      console.log("WebRTC connection established!");
+    } catch (error) {
+      console.error("Failed to start analysis session:", error);
+      alert("Could not establish a connection with the server.");
+    }
   }
 
   function stopAnalysis() {
@@ -87,7 +94,11 @@
       pc = null;
       console.log("WebRTC connection closed.");
     }
+
+    stopCamera();
   }
+
+  onMount(() => {});
 
   onDestroy(() => {
     stopCamera();
@@ -95,30 +106,32 @@
   });
 </script>
 
-<main class="flex flex-col items-center justify-center p-4">
-  <h1 class="text-2xl font-bold mb-4">Live Camera Feed</h1>
-  <div class="w-full max-w-4xl mx-auto bg-black border-2 border-gray-600 rounded-lg shadow-lg overflow-hidden">
-    <video bind:this={videoElement} class="w-full h-auto block" autoplay playsinline muted></video>
-  </div>
-
-  <div class="mt-4">
-    <button
+<main class="flex flex-col items-center justify-center p-8">
+  <h1 class="text-4xl font-bold mb-4">Live Analysis</h1>
+  {#if !stream}
+    <Button
       onclick={startCamera}
-      class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg m-2 transition-colors duration-300"
-    >
-      Start Camera
-    </button>
-    <button onclick={startAnalysis} class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg m-2">
-      Start Analysis
-    </button>
-    <button onclick={stopAnalysis} class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg m-2">
-      Stop Analysis
-    </button>
-    <button
-      onclick={stopCamera}
-      class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg m-2 transition-colors duration-300"
-    >
-      Stop Camera
-    </button>
+      class="w-full h-120 hover:bg-gray-50 bg-transparent border-dashed border-2 text-black text-lg font-light py-2 px-4 rounded-lg m-2 transition-colors duration-300"
+      >Start Camera
+    </Button>
+  {/if}
+  <div class:hidden={!stream} class="w-full mx-auto bg-black border-2 border-gray-600 rounded-lg shadow-lg overflow-hidden">
+    <video bind:this={videoElement} class="w-full max-h-115 block" autoplay playsinline muted></video>
   </div>
+  {#if stream}
+    <!-- TODO: Create and handle analysis event -->
+    <div>
+      <Button onclick={startAnalysis} class="text-white font-bold py-2 px-4 rounded-lg m-2">Start Analysis</Button>
+      <Button onclick={stopAnalysis} variant="destructive" class="text-white font-bold py-2 px-4 rounded-lg m-2">Stop Analysis</Button>
+    </div>
+    <div class="items-center text-center font-bold text-3xl m-5">Statistics</div>
+    <div class="grid lg:grid-cols-3 sm:grid-cols-2 grid-cols-1 gap-5 p-3">
+      <div><RadialChart shotData={data1} /></div>
+      <div><RadialChart shotData={data2} /></div>
+      <div><RadialChart shotData={data3} /></div>
+      <div><RadialChart shotData={data2} /></div>
+      <div><RadialChart shotData={data1} /></div>
+      <div><RadialChart shotData={data3} /></div>
+    </div>
+  {/if}
 </main>
