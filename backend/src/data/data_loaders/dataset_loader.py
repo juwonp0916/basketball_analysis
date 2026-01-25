@@ -10,6 +10,7 @@ from typing import Dict, List, Any, Optional, Tuple
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
 
+
 class BasketballDataset(Dataset):
     """Basketball dataset for training and evaluation"""
 
@@ -246,6 +247,7 @@ class BasketballDataset(Dataset):
 
         return {}
 
+
 class DatasetBuilder:
     """Builder class for creating basketball datasets"""
 
@@ -298,8 +300,8 @@ class DatasetBuilder:
         )
 
     def build_dataloader(self, dataset: BasketballDataset,
-                        batch_size: int = 16, shuffle: bool = True,
-                        num_workers: int = 4) -> DataLoader:
+                         batch_size: int = 16, shuffle: bool = True,
+                         num_workers: int = 4) -> DataLoader:
         """Build dataloader for dataset"""
         return DataLoader(
             dataset,
