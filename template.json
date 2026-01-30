@@ -1,0 +1,119 @@
+{
+  "_schema_version": "1.0",
+  "_description": "Real-time basketball shot detection message formats",
+
+  "message_types": {
+
+    "init": {
+      "_description": "Sent once at game start to initialize frontend state",
+      "type": "init",
+      "game_id": "string (unique session identifier)",
+      "teams": [
+        { "id": 0, "color": "string (team color description)" },
+        { "id": 1, "color": "string (team color description)" }
+      ],
+      "quarter": 1
+    },
+
+    "shot": {
+      "_description": "Sent each time a shot is detected",
+      "type": "shot",
+      "game_id": "string",
+      "ts": "number (Unix timestamp in seconds)",
+      "team": "number (0 or 1)",
+      "made": "boolean",
+      "quarter": "number (1-4, or 5+ for OT)",
+      "shot_type": "string (2PT | 3PT)",
+      "zone": "number (court zone 1-14)",
+      "x": "number (FIBA meters, -7.5 to 7.5)",
+      "y": "number (FIBA meters, 0 to 14)"
+    },
+
+    "quarter": {
+      "_description": "Sent when quarter/period changes",
+      "type": "quarter",
+      "game_id": "string",
+      "quarter": "number"
+    },
+
+    "correction": {
+      "_description": "Sent to remove a false positive detection",
+      "type": "correction",
+      "game_id": "string",
+      "remove_shot_ts": "number (timestamp of shot to remove)"
+    }
+  },
+
+  "examples": [
+    {
+      "type": "init",
+      "game_id": "game_20240130_001",
+      "teams": [
+        { "id": 0, "color": "Black/Dark" },
+        { "id": 1, "color": "Dark Blue/Navy" }
+      ],
+      "quarter": 1
+    },
+    {
+      "type": "shot",
+      "game_id": "game_20240130_001",
+      "ts": 1706621234.56,
+      "team": 1,
+      "made": true,
+      "quarter": 1,
+      "shot_type": "3PT",
+      "zone": 6,
+      "x": 1.40,
+      "y": 8.64
+    },
+    {
+      "type": "shot",
+      "game_id": "game_20240130_001",
+      "ts": 1706621298.12,
+      "team": 0,
+      "made": false,
+      "quarter": 1,
+      "shot_type": "2PT",
+      "zone": 2,
+      "x": -2.15,
+      "y": 3.20
+    },
+    {
+      "type": "quarter",
+      "game_id": "game_20240130_001",
+      "quarter": 2
+    },
+    {
+      "type": "correction",
+      "game_id": "game_20240130_001",
+      "remove_shot_ts": 1706621298.12
+    }
+  ],
+
+  "zones": {
+    "_description": "Court zone mapping reference",
+    "1": "Paint/Restricted Area",
+    "2": "Mid-Range Left",
+    "3": "Mid-Range Right",
+    "4": "Mid-Range Center",
+    "5": "Free Throw Area",
+    "6": "3PT Left Corner",
+    "7": "3PT Right Corner",
+    "8": "3PT Left Wing",
+    "9": "3PT Right Wing",
+    "10": "3PT Top of Key",
+    "11": "3PT Deep Left",
+    "12": "3PT Deep Right",
+    "13": "3PT Deep Center",
+    "14": "Half Court+"
+  },
+
+  "court_coordinates": {
+    "_description": "FIBA half-court coordinate system",
+    "x_range": [-7.5, 7.5],
+    "x_unit": "meters (left to right facing basket)",
+    "y_range": [0, 14],
+    "y_unit": "meters (baseline to half-court)",
+    "basket_position": { "x": 0, "y": 1.575 }
+  }
+}

@@ -4,10 +4,18 @@ import logging
 import json
 import time
 import random
-from typing import List, Dict, Deque, Any, Optional
+from typing import List, Dict, Deque, Any, Optional, Tuple
+import sys
+import os
+
+# Add score_detection to path for imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'score_detection'))
 from aiortc import RTCPeerConnection, RTCSessionDescription
 from av import VideoFrame
-from schema import GameStats, TotalShots, Percentages, Shot, Point, FrameSyncPayload, ShotDetectedPayload
+from schema import GameStats, TotalShots, Percentages, Shot, Point, FrameSyncPayload, ShotPayload
+
+# Alias for backward compatibility
+ShotDetectedPayload = ShotPayload
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +48,16 @@ class SharedFrameBuffer:
         self._q.task_done()
         return frame
 
+    def stats(self) -> Dict[str, Any]:
+        """Return buffer statistics for debugging"""
+        return {
+            "queue_size": self._q.qsize(),
+            "queue_maxsize": self._q.maxsize,
+            "history_len": len(self._history),
+            "total_frames_received": self._total_frames_received,
+            "last_frame_ts": self._last_frame_ts
+        }
+
 
 class TrackConsumer:
     def __init__(self, track, buffer: SharedFrameBuffer):
@@ -52,7 +70,7 @@ class TrackConsumer:
         try:
             while True:
                 frame = await self.track.recv()
-                self.buffer.add_frame(frame)
+                await self.buffer.put_frame(frame)
         except Exception:
             pass
 
@@ -68,12 +86,18 @@ class ConnectionManager:
     def __init__(self):
         self.pcs = set()
         self.consumers = set()
-        self.frame_buffer = SharedFrameBuffer(maxlen=60)  # Store ~2 seconds for analysis
+        self.frame_buffer = SharedFrameBuffer(maxsize=60)  # Store ~2 seconds for analysis
         self.active_data_channel = None
 
         # Dummy broadcast loop (for frontend UI verification)
         self._dummy_task: Optional[asyncio.Task] = None
         self._dummy_seq: int = 0
+
+        # Shot detection pipeline
+        self.shot_pipeline: Optional[Any] = None  # ShotProcessingPipeline
+        self.calibration_points: Optional[List[List[float]]] = None
+        self.calibration_dimensions: Optional[Tuple[int, int]] = None
+        self._is_calibrated: bool = False
 
     async def handle_offer(self, params):
         offer = RTCSessionDescription(sdp=params["sdp"], type=params["type"])
@@ -129,8 +153,8 @@ class ConnectionManager:
         self._dummy_task.cancel()
         try:
             await self._dummy_task
-        except Exception:
-            pass
+        except (asyncio.CancelledError, Exception):
+            pass  # Expected when cancelling the task
         self._dummy_task = None
 
     async def _dummy_broadcast_loop(self, interval_sec: float) -> None:
@@ -246,3 +270,127 @@ class ConnectionManager:
         for c in list(self.consumers):
             c.stop()
         await pc.close()
+
+    # ============ Calibration & Detection Methods ============
+
+    @property
+    def is_calibrated(self) -> bool:
+        """Check if calibration has been set"""
+        return self._is_calibrated
+
+    @property
+    def is_detecting(self) -> bool:
+        """Check if real shot detection is running"""
+        return self.shot_pipeline is not None and self.shot_pipeline.is_running
+
+    def set_calibration(
+        self,
+        points: List[List[float]],
+        dimensions: Tuple[int, int]
+    ) -> bool:
+        """
+        Set 6-point court calibration.
+
+        Args:
+            points: List of 6 calibration points [[x1,y1], [x2,y2], ...]
+            dimensions: (width, height) of the calibration frame
+
+        Returns:
+            True if calibration was successful
+        """
+        # Validate points
+        if len(points) != 6:
+            logger.error(f"Expected 6 calibration points, got {len(points)}")
+            return False
+
+        for i, point in enumerate(points):
+            if len(point) != 2:
+                logger.error(f"Point {i} must have 2 coordinates, got {len(point)}")
+                return False
+
+        self.calibration_points = points
+        self.calibration_dimensions = dimensions
+        self._is_calibrated = True
+
+        # Update pipeline if running
+        if self.shot_pipeline:
+            self.shot_pipeline.set_calibration(points, dimensions)
+
+        logger.info(f"Calibration set: {len(points)} points, dimensions {dimensions}")
+        return True
+
+    def get_calibration(self) -> Dict[str, Any]:
+        """Get current calibration state"""
+        return {
+            "is_calibrated": self._is_calibrated,
+            "points": self.calibration_points,
+            "dimensions": self.calibration_dimensions
+        }
+
+    async def start_shot_detection(self) -> bool:
+        """
+        Start real shot detection (requires calibration).
+
+        This stops the dummy broadcast and starts the real detection pipeline.
+
+        Returns:
+            True if detection started successfully
+        """
+        if not self._is_calibrated:
+            logger.warning("Cannot start detection without calibration")
+            return False
+
+        if self.shot_pipeline and self.shot_pipeline.is_running:
+            logger.warning("Shot detection already running")
+            return True
+
+        # Stop dummy broadcast
+        await self.stop_dummy_broadcast()
+
+        # Import and create pipeline
+        try:
+            from shot_processing_pipeline import ShotProcessingPipeline
+
+            self.shot_pipeline = ShotProcessingPipeline(
+                frame_buffer=self.frame_buffer,
+                broadcaster=self.broadcast,
+                calibration_points=self.calibration_points,
+                frame_width=self.calibration_dimensions[0] if self.calibration_dimensions else 1280,
+                frame_height=self.calibration_dimensions[1] if self.calibration_dimensions else 720
+            )
+
+            await self.shot_pipeline.start()
+            logger.info("Shot detection started")
+            return True
+
+        except Exception as e:
+            logger.exception(f"Failed to start shot detection: {e}")
+            # Restart dummy on failure
+            self.start_dummy_broadcast()
+            return False
+
+    async def stop_shot_detection(self) -> None:
+        """
+        Stop shot detection and revert to dummy broadcast.
+        """
+        if self.shot_pipeline:
+            await self.shot_pipeline.stop()
+            self.shot_pipeline = None
+            logger.info("Shot detection stopped")
+
+        # Restart dummy broadcast
+        self.start_dummy_broadcast()
+
+    def reset_stats(self) -> None:
+        """Reset accumulated statistics"""
+        if self.shot_pipeline:
+            self.shot_pipeline.reset_stats()
+        self._dummy_seq = 0
+        logger.info("Statistics reset")
+
+    def get_current_stats(self) -> Optional[Dict[str, Any]]:
+        """Get current detection statistics"""
+        if self.shot_pipeline:
+            stats = self.shot_pipeline.get_current_stats()
+            return stats.model_dump()
+        return None
