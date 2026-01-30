@@ -27,3 +27,6 @@ dist/
 # Logs and temporary files
 *.log
 tmp/
+
+# Large files
+backend/video1.mp4
