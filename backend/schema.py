@@ -1,4 +1,4 @@
-from typing import Literal, Union
+from typing import Literal, Union, Optional, List
 from pydantic import BaseModel
 
 
@@ -46,5 +46,31 @@ class ShotPayload(BaseModel):
     updated_stats: GameStats
 
 
+# Alias for backward compatibility
+ShotDetectedPayload = ShotPayload
+
 # Union type for type hinting elsewhere
 WebRTCMessage = Union[FrameSyncPayload, ShotPayload]
+
+
+# Calibration schemas
+class CalibrationRequest(BaseModel):
+    """Request schema for setting 6-point court calibration"""
+    points: List[List[float]]  # 6 points [[x1,y1], [x2,y2], ...]
+    image_width: int
+    image_height: int
+
+
+class CalibrationResponse(BaseModel):
+    """Response schema for calibration operations"""
+    success: bool
+    is_calibrated: bool = False
+    error: Optional[str] = None
+    points: Optional[List[List[float]]] = None
+
+
+class DetectionStatusResponse(BaseModel):
+    """Response schema for detection status"""
+    status: str
+    is_detecting: bool = False
+    is_calibrated: bool = False

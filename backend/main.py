@@ -1,12 +1,13 @@
 import asyncio
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from src.utils.webrtc_manager import ConnectionManager
+from schema import CalibrationRequest, CalibrationResponse, DetectionStatusResponse
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("backend")
@@ -49,6 +50,150 @@ async def debug_frame_stats() -> Dict[str, Any]:
 async def offer(offer: Offer) -> Dict[str, str]:
     # This is called by the frontend's sendOffer(...)
     return await manager.handle_offer(offer.model_dump())
+
+
+# ============ Calibration Endpoints ============
+
+@app.post("/calibration", response_model=CalibrationResponse)
+async def set_calibration(request: CalibrationRequest) -> CalibrationResponse:
+    """
+    Set 6-point court calibration for shot localization.
+
+    The 6 points should be in clockwise order:
+    1. Baseline Left Sideline
+    2. Baseline Left Penalty Box
+    3. Baseline Right Penalty Box
+    4. Baseline Right Sideline
+    5. Free Throw Line Left
+    6. Free Throw Line Right
+    """
+    # Validate point count
+    if len(request.points) != 6:
+        return CalibrationResponse(
+            success=False,
+            is_calibrated=manager.is_calibrated,
+            error=f"Expected 6 calibration points, got {len(request.points)}"
+        )
+
+    # Validate each point has 2 coordinates
+    for i, point in enumerate(request.points):
+        if len(point) != 2:
+            return CalibrationResponse(
+                success=False,
+                is_calibrated=manager.is_calibrated,
+                error=f"Point {i+1} must have 2 coordinates (x, y)"
+            )
+
+    # Set calibration
+    success = manager.set_calibration(
+        points=request.points,
+        dimensions=(request.image_width, request.image_height)
+    )
+
+    return CalibrationResponse(
+        success=success,
+        is_calibrated=manager.is_calibrated,
+        points=request.points if success else None,
+        error=None if success else "Failed to set calibration"
+    )
+
+
+@app.get("/calibration", response_model=CalibrationResponse)
+async def get_calibration() -> CalibrationResponse:
+    """Get current calibration state"""
+    cal = manager.get_calibration()
+    return CalibrationResponse(
+        success=True,
+        is_calibrated=cal["is_calibrated"],
+        points=cal["points"]
+    )
+
+
+# ============ Detection Control Endpoints ============
+
+@app.post("/detection/start", response_model=DetectionStatusResponse)
+async def start_detection() -> DetectionStatusResponse:
+    """
+    Start real shot detection.
+
+    Requires calibration to be set first. This will stop the dummy broadcast
+    and start processing frames with the YOLO-based shot detector.
+    """
+    if not manager.is_calibrated:
+        raise HTTPException(
+            status_code=400,
+            detail="Calibration required before starting detection. Call POST /calibration first."
+        )
+
+    success = await manager.start_shot_detection()
+
+    if not success:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to start shot detection"
+        )
+
+    return DetectionStatusResponse(
+        status="started",
+        is_detecting=manager.is_detecting,
+        is_calibrated=manager.is_calibrated
+    )
+
+
+@app.post("/detection/stop", response_model=DetectionStatusResponse)
+async def stop_detection() -> DetectionStatusResponse:
+    """
+    Stop shot detection and revert to dummy broadcast.
+    """
+    await manager.stop_shot_detection()
+
+    return DetectionStatusResponse(
+        status="stopped",
+        is_detecting=manager.is_detecting,
+        is_calibrated=manager.is_calibrated
+    )
+
+
+@app.post("/detection/reset", response_model=DetectionStatusResponse)
+async def reset_stats() -> DetectionStatusResponse:
+    """
+    Reset accumulated shot statistics.
+
+    This clears all shot counts and resets the detector state.
+    Does not affect calibration.
+    """
+    manager.reset_stats()
+
+    return DetectionStatusResponse(
+        status="reset",
+        is_detecting=manager.is_detecting,
+        is_calibrated=manager.is_calibrated
+    )
+
+
+@app.get("/detection/status", response_model=DetectionStatusResponse)
+async def get_detection_status() -> DetectionStatusResponse:
+    """Get current detection status"""
+    return DetectionStatusResponse(
+        status="detecting" if manager.is_detecting else "idle",
+        is_detecting=manager.is_detecting,
+        is_calibrated=manager.is_calibrated
+    )
+
+
+@app.get("/detection/stats")
+async def get_detection_stats() -> Dict[str, Any]:
+    """Get current shot detection statistics"""
+    stats = manager.get_current_stats()
+    if stats is None:
+        return {
+            "is_detecting": False,
+            "stats": None
+        }
+    return {
+        "is_detecting": True,
+        "stats": stats
+    }
 
 
 # Allow your frontend dev server
