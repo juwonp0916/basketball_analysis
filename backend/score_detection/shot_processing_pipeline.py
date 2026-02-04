@@ -34,7 +34,8 @@ class ShotProcessingPipeline:
     """
 
     # Skip threshold: if more than this many frames queued, start skipping
-    SKIP_THRESHOLD = 30
+    # Set to 10 for aggressive frame dropping to keep real-time performance
+    SKIP_THRESHOLD = 10
 
     def __init__(
         self,
@@ -171,12 +172,12 @@ class ShotProcessingPipeline:
                 # Get next frame from buffer
                 frame = await self.frame_buffer.get_next()
 
-                # Check queue size for frame skipping
+                # Check queue size for frame skipping (check every frame)
                 queue_size = self.frame_buffer._q.qsize()
                 if queue_size > self.SKIP_THRESHOLD:
                     frames_skipped += 1
                     self._sequence_id += 1
-                    if frames_skipped % 30 == 0:
+                    if frames_skipped % 100 == 0:  # Log less frequently
                         logger.warning(
                             f"Skipped {frames_skipped} frames (queue: {queue_size})"
                         )
@@ -194,16 +195,15 @@ class ShotProcessingPipeline:
                     self._sequence_id
                 )
 
-                # Get current stats
-                current_stats = self.get_current_stats()
-
-                # Broadcast frame sync
-                frame_msg = FrameSyncPayload(
-                    sequence_id=self._sequence_id,
-                    video_timestamp_ms=timestamp_ms,
-                    current_stats=current_stats
-                )
-                await self.broadcaster(frame_msg.model_dump())
+                # Broadcast frame sync only every 5 frames to reduce overhead
+                if self._sequence_id % 5 == 0:
+                    current_stats = self.get_current_stats()
+                    frame_msg = FrameSyncPayload(
+                        sequence_id=self._sequence_id,
+                        video_timestamp_ms=timestamp_ms,
+                        current_stats=current_stats
+                    )
+                    await self.broadcaster(frame_msg.model_dump())
 
                 # Broadcast shot event if detected
                 if shot_event:
@@ -260,16 +260,22 @@ class ShotProcessingPipeline:
         # Determine location string
         location = self._get_location_string(shot_event)
 
-        # Get coordinates
-        coord_x = 0.0
-        coord_y = 0.0
+        # Get coordinates in FIBA meters first, then convert to frontend chart space.
+        # FIBA system: X ∈ [-7.5, 7.5], Y ∈ [0, 14] (origin at center of baseline)
+        # Frontend chart: X ∈ [0, 50], Y ∈ [0, 47] (origin at baseline-left corner)
+        fiba_x = 0.0
+        fiba_y = 0.0
         if shot_event.court_position and shot_event.court_position[0] is not None:
-            coord_x = shot_event.court_position[0]
-            coord_y = shot_event.court_position[1]
+            fiba_x = shot_event.court_position[0]
+            fiba_y = shot_event.court_position[1]
         elif shot_event.shooter_position:
-            # Normalize pixel position to court-like coordinates
-            coord_x = shot_event.shooter_position['x'] / self.frame_width * 15.0 - 7.5
-            coord_y = shot_event.shooter_position['y'] / self.frame_height * 14.0
+            # Normalize pixel position to FIBA court coordinates
+            fiba_x = shot_event.shooter_position['x'] / self.frame_width * 15.0 - 7.5
+            fiba_y = shot_event.shooter_position['y'] / self.frame_height * 14.0
+
+        # Convert FIBA meters → frontend chart coordinates
+        coord_x = (fiba_x + 7.5) / 15.0 * 50.0
+        coord_y = fiba_y / 14.0 * 47.0
 
         shot_type_literal = "3pt" if shot_event.shot_type == '3pt' else "2pt"
         result_literal = "made" if shot_event.is_made else "missed"

@@ -1,13 +1,18 @@
 import asyncio
 import logging
+import os
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from src.utils.webrtc_manager import ConnectionManager
 from schema import CalibrationRequest, CalibrationResponse, DetectionStatusResponse
+
+VIDEO_DIR = Path(__file__).parent / "score_detection"
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("backend")
@@ -44,6 +49,17 @@ async def health() -> Dict[str, Any]:
 @app.get("/debug/frame_stats")
 async def debug_frame_stats() -> Dict[str, Any]:
     return manager.frame_buffer.stats()
+
+
+@app.get("/video/{filename}")
+async def serve_video(filename: str):
+    """Serve .mp4 video files from the score_detection directory."""
+    if not filename.endswith(".mp4"):
+        raise HTTPException(status_code=400, detail="Only .mp4 files are allowed")
+    file_path = VIDEO_DIR / filename
+    if not file_path.is_file():
+        raise HTTPException(status_code=404, detail="Video not found")
+    return FileResponse(file_path, media_type="video/mp4")
 
 
 @app.post("/offer")

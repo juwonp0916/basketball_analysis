@@ -3,7 +3,7 @@
   import { createPeerConnection, sendOffer } from "$lib/webrtc_utils";
   import Button from "$lib/components/ui/button/button.svelte";
   import * as Card from "$lib/components/ui/card/index.js";
-  import { Settings, Circle, Square, Check, X, Play, Pause, Video } from "lucide-svelte";
+  import { Settings, Circle, Square, Check, X, Play, Pause, Video, RotateCcw, Crosshair } from "lucide-svelte";
   import { Chart, Svg, Points, Group, Text } from "layerchart";
   import type { Shot, GameStats } from "@/lib/types";
   import { writable } from "svelte/store";
@@ -11,9 +11,35 @@
   // --- WebRTC & Camera Logic ---
 
   let videoElement: HTMLVideoElement | null = null;
+  let videoContainer: HTMLDivElement | null = null;
   let stream = $state<MediaStream | null>(null);
   let pc: RTCPeerConnection | null = null;
   let analyticsChannel: RTCDataChannel | null = null;
+
+  // --- Simulation & Calibration State ---
+  const BACKEND_URL = "http://127.0.0.1:8000";
+  let simulationMode = $state(false);
+  let calibrationMode = $state(false);
+  let calibrationPoints = $state<{ x: number; y: number }[]>([]);
+  let isCalibrated = $state(false);
+
+  const CALIBRATION_LABELS = [
+    "Baseline Left Sideline",
+    "Baseline Left Penalty Box",
+    "Baseline Right Penalty Box",
+    "Baseline Right Sideline",
+    "Free Throw Line Left",
+    "Free Throw Line Right",
+  ];
+
+  const CALIBRATION_COLORS = [
+    "#eab308", // yellow - sideline
+    "#22c55e", // green - penalty box
+    "#22c55e", // green - penalty box
+    "#eab308", // yellow - sideline
+    "#d946ef", // magenta - FT line
+    "#d946ef", // magenta - FT line
+  ];
 
   type FrameSyncPayload = {
     type: "frame_sync";
@@ -34,6 +60,7 @@
   let logs = $state<Shot[]>([]);
   let shots = $state<Shot[]>([]);
   let analysisStartMs = $state<number | null>(null);
+  let selectedShotId = $state<number | null>(null);
 
   let stats = $state<GameStats>({
     totalShots: { made: 0, total: 0 },
@@ -56,6 +83,8 @@
 
   type ShotPoint = { id: number; x: number; y: number; result: Shot["result"] };
   const shotPoints = $derived<ShotPoint[]>(shots.map((s) => ({ id: s.id, x: s.coord.x, y: s.coord.y, result: s.result })));
+
+  // --- Camera Mode ---
 
   async function handleStartCamera() {
     try {
@@ -83,9 +112,101 @@
     }
   }
 
+  // --- Simulation Mode ---
+
+  async function handleStartSimulation() {
+    if (!videoElement) return;
+    simulationMode = true;
+
+    videoElement.crossOrigin = "anonymous";
+    videoElement.src = `${BACKEND_URL}/video/video1.mp4`;
+
+    await new Promise<void>((resolve) => {
+      videoElement!.addEventListener("canplay", () => resolve(), { once: true });
+    });
+
+    // Slow playback so the backend YOLO pipeline can process more frames.
+    // At 1x the queue floods (~80% skipped); 0.3x keeps most frames processable.
+    videoElement.playbackRate = 0.5;
+
+    // Play briefly to initialize the stream, then pause for calibration
+    await videoElement.play();
+
+    // Capture the stream from the video element
+    stream = (videoElement as any).captureStream();
+
+    // Pause for calibration
+    videoElement.pause();
+    calibrationMode = true;
+  }
+
+  // --- Calibration ---
+
+  function handleCalibrationClick(event: MouseEvent) {
+    if (!videoElement || calibrationPoints.length >= 6) return;
+
+    const rect = videoElement.getBoundingClientRect();
+    const clickX = event.clientX - rect.left;
+    const clickY = event.clientY - rect.top;
+
+    // Scale to actual video resolution
+    const scaleX = videoElement.videoWidth / videoElement.clientWidth;
+    const scaleY = videoElement.videoHeight / videoElement.clientHeight;
+
+    calibrationPoints = [
+      ...calibrationPoints,
+      { x: clickX * scaleX, y: clickY * scaleY },
+    ];
+  }
+
+  function resetCalibration() {
+    calibrationPoints = [];
+  }
+
+  async function confirmCalibration() {
+    if (!videoElement || calibrationPoints.length !== 6) return;
+
+    const payload = {
+      points: calibrationPoints.map((p) => [p.x, p.y]),
+      image_width: videoElement.videoWidth,
+      image_height: videoElement.videoHeight,
+    };
+
+    try {
+      const res = await fetch(`${BACKEND_URL}/calibration`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (data.success) {
+        isCalibrated = true;
+        calibrationMode = false;
+        // Resume video playback
+        videoElement.play();
+      } else {
+        alert(`Calibration failed: ${data.error || "Unknown error"}`);
+      }
+    } catch (err) {
+      console.error("Calibration request failed:", err);
+      alert("Could not send calibration to server.");
+    }
+  }
+
+  // Get calibration point position in element-relative pixels (for SVG overlay display)
+  function toDisplayCoords(point: { x: number; y: number }) {
+    if (!videoElement) return { x: 0, y: 0 };
+    return {
+      x: point.x / (videoElement.videoWidth / videoElement.clientWidth),
+      y: point.y / (videoElement.videoHeight / videoElement.clientHeight),
+    };
+  }
+
+  // --- Analysis ---
+
   async function startAnalysis() {
     if (!stream) {
-      alert("Please start the camera first.");
+      alert("Please start the camera or simulation first.");
       return;
     }
     try {
@@ -95,7 +216,16 @@
 
       analyticsChannel = pc.createDataChannel("analytics");
 
-      analyticsChannel.onopen = () => console.log("Analytics data channel opened.");
+      analyticsChannel.onopen = () => {
+        console.log("Analytics data channel opened.");
+        // Auto-start detection if simulation mode and calibrated
+        if (simulationMode && isCalibrated) {
+          fetch(`${BACKEND_URL}/detection/start`, { method: "POST" })
+            .then((res) => res.json())
+            .then((data) => console.log("Detection started:", data))
+            .catch((err) => console.error("Failed to start detection:", err));
+        }
+      };
       analyticsChannel.onclose = () => console.log("Analytics data channel closed.");
       analyticsChannel.onmessage = (event) => {
         const msg = JSON.parse(event.data) as WebRTCMessage;
@@ -123,9 +253,14 @@
 
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
-      const answer = await sendOffer(pc, "http://127.0.0.1:8000/offer");
+      const answer = await sendOffer(pc, `${BACKEND_URL}/offer`);
       await pc.setRemoteDescription(new RTCSessionDescription(answer));
       console.log("WebRTC connection established!");
+
+      // Resume video if simulation mode (in case it was paused)
+      if (simulationMode && videoElement && videoElement.paused) {
+        videoElement.play();
+      }
     } catch (error) {
       console.error("Failed to start analysis session:", error);
       alert("Could not establish a connection with the server.");
@@ -138,7 +273,28 @@
       pc = null;
       console.log("WebRTC connection closed.");
     }
-    stopCamera();
+
+    if (simulationMode) {
+      if (videoElement) {
+        videoElement.pause();
+        videoElement.src = "";
+      }
+      simulationMode = false;
+      calibrationMode = false;
+      calibrationPoints = [];
+      isCalibrated = false;
+      stream = null;
+    } else {
+      stopCamera();
+    }
+  }
+
+  function enterCalibrationMode() {
+    if (!videoElement) return;
+    videoElement.pause();
+    calibrationMode = true;
+    calibrationPoints = [];
+    isCalibrated = false;
   }
 
   onMount(() => {});
@@ -148,9 +304,9 @@
     stopAnalysis();
   });
 
-  // --- UI State & Mock Data ---
+  // --- UI State ---
   let isRecording = $state(false);
-  let recordingDuration = $state("00:12:45"); // Mock
+  let recordingDuration = $state("00:12:45");
 </script>
 
 <div class="min-h-screen bg-[#0f1116] text-white font-sans p-6">
@@ -158,7 +314,6 @@
   <header class="flex justify-between items-center mb-6">
     <div class="flex items-center gap-2">
       <div class="w-6 h-6 bg-blue-600 rounded-full"></div>
-      <!-- Logo Placeholder -->
       <h1 class="text-xl font-bold">LiveShot Analytics</h1>
     </div>
     <div class="flex items-center gap-4">
@@ -176,7 +331,10 @@
     <!-- Left Column: Video & Logs -->
     <div class="lg:col-span-2 flex flex-col gap-6">
       <!-- Video Player -->
-      <div class="relative w-full aspect-video bg-black rounded-xl overflow-hidden border border-gray-800 shadow-2xl">
+      <div
+        bind:this={videoContainer}
+        class="relative w-full aspect-video bg-black rounded-xl overflow-hidden border border-gray-800 shadow-2xl"
+      >
         {#if !stream}
           <div class="absolute inset-0 flex flex-col items-center justify-center text-gray-500">
             <Video class="w-12 h-12 mb-4 opacity-50" />
@@ -184,9 +342,96 @@
             <Button onclick={handleStartCamera} variant="secondary">Start Camera</Button>
           </div>
         {/if}
-        <video bind:this={videoElement} class="w-full h-full object-cover" autoplay playsinline muted></video>
+        <!-- svelte-ignore a11y_media_has_caption -->
+        <video
+          bind:this={videoElement}
+          class="w-full h-full object-cover"
+          autoplay
+          playsinline
+          muted
+          crossorigin="anonymous"
+        ></video>
 
-        <!-- Video Overlay Controls (Mock) -->
+        <!-- Calibration Overlay -->
+        {#if calibrationMode && videoElement}
+          <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+          <div
+            class="absolute inset-0 cursor-crosshair"
+            onclick={handleCalibrationClick}
+          >
+            <svg class="absolute inset-0 w-full h-full" style="pointer-events: none;">
+              <!-- Connecting lines -->
+              {#if calibrationPoints.length >= 2}
+                <!-- Baseline segments -->
+                {#each [
+                  [0, 1],
+                  [1, 2],
+                  [2, 3],
+                ] as [a, b]}
+                  {#if calibrationPoints.length > b}
+                    {@const pa = toDisplayCoords(calibrationPoints[a])}
+                    {@const pb = toDisplayCoords(calibrationPoints[b])}
+                    <line
+                      x1={pa.x}
+                      y1={pa.y}
+                      x2={pb.x}
+                      y2={pb.y}
+                      stroke={b <= 1 ? "#eab308" : b === 2 ? "#22c55e" : "#eab308"}
+                      stroke-width="2"
+                      opacity="0.7"
+                    />
+                  {/if}
+                {/each}
+              {/if}
+              {#if calibrationPoints.length >= 6}
+                <!-- FT line -->
+                {@const p4 = toDisplayCoords(calibrationPoints[4])}
+                {@const p5 = toDisplayCoords(calibrationPoints[5])}
+                <line x1={p4.x} y1={p4.y} x2={p5.x} y2={p5.y} stroke="#d946ef" stroke-width="2" opacity="0.7" />
+                <!-- Penalty box sides -->
+                {@const p1 = toDisplayCoords(calibrationPoints[1])}
+                {@const p2 = toDisplayCoords(calibrationPoints[2])}
+                <line x1={p1.x} y1={p1.y} x2={p4.x} y2={p4.y} stroke="#22c55e" stroke-width="2" opacity="0.7" />
+                <line x1={p2.x} y1={p2.y} x2={p5.x} y2={p5.y} stroke="#22c55e" stroke-width="2" opacity="0.7" />
+              {/if}
+
+              <!-- Point markers -->
+              {#each calibrationPoints as point, i}
+                {@const dp = toDisplayCoords(point)}
+                <circle cx={dp.x} cy={dp.y} r="8" fill={CALIBRATION_COLORS[i]} opacity="0.9" stroke="white" stroke-width="1.5" />
+                <text x={dp.x} y={dp.y + 1} text-anchor="middle" dominant-baseline="middle" fill="black" font-size="10" font-weight="bold">
+                  {i + 1}
+                </text>
+                <text x={dp.x + 14} y={dp.y + 4} fill="white" font-size="11" font-weight="600" style="text-shadow: 0 1px 3px rgba(0,0,0,0.8);">
+                  {CALIBRATION_LABELS[i]}
+                </text>
+              {/each}
+            </svg>
+
+            <!-- Calibration instructions + action buttons -->
+            <div class="absolute top-4 left-1/2 -translate-x-1/2 bg-black/80 rounded-lg px-4 py-2 text-center pointer-events-auto flex flex-col items-center gap-2">
+              {#if calibrationPoints.length < 6}
+                <p class="text-sm font-medium text-white pointer-events-none">
+                  Click point {calibrationPoints.length + 1}/6: <span class="text-blue-400">{CALIBRATION_LABELS[calibrationPoints.length]}</span>
+                </p>
+              {:else}
+                <p class="text-sm font-medium text-green-400 pointer-events-none">All 6 points placed. Confirm or reset.</p>
+              {/if}
+              <div class="flex gap-3">
+              <Button onclick={(e: MouseEvent) => { e.stopPropagation(); resetCalibration(); }} variant="secondary" size="sm">
+                <RotateCcw class="w-4 h-4 mr-1" /> Reset
+              </Button>
+              {#if calibrationPoints.length === 6}
+                <Button onclick={(e: MouseEvent) => { e.stopPropagation(); confirmCalibration(); }} size="sm" class="bg-green-600 hover:bg-green-700">
+                  <Check class="w-4 h-4 mr-1" /> Confirm Calibration
+                </Button>
+              {/if}
+              </div>
+            </div>
+          </div>
+        {/if}
+
+        <!-- Video Overlay Controls -->
         <div class="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/80 to-transparent flex justify-between items-center">
           <span class="text-sm font-mono">1:02:14</span>
           <div class="w-full mx-4 h-1 bg-gray-600 rounded-full overflow-hidden">
@@ -204,15 +449,30 @@
               <div class="w-4 h-4 bg-red-500 rounded-full {isRecording ? 'animate-pulse' : ''}"></div>
             </div>
             <div>
-              <h3 class="font-bold text-white">Recording in Progress</h3>
-              <p class="text-sm text-gray-400">Duration: {recordingDuration}</p>
+              <h3 class="font-bold text-white">
+                {simulationMode ? "Simulation Mode" : "Recording in Progress"}
+              </h3>
+              <p class="text-sm text-gray-400">
+                {#if simulationMode && !isCalibrated}
+                  Calibration required
+                {:else if simulationMode && isCalibrated}
+                  Calibrated - Ready for analysis
+                {:else}
+                  Duration: {recordingDuration}
+                {/if}
+              </p>
             </div>
           </div>
           <div class="flex gap-3">
+            {#if simulationMode && stream && !calibrationMode && !isCalibrated}
+              <Button onclick={enterCalibrationMode} variant="secondary" size="sm">
+                <Crosshair class="w-4 h-4 mr-2" /> Calibrate
+              </Button>
+            {/if}
             {#if !stream}
               <Button disabled variant="secondary">Start Camera First</Button>
             {:else if !pc}
-              <Button onclick={startAnalysis} variant="secondary">
+              <Button onclick={startAnalysis} variant="secondary" disabled={simulationMode && !isCalibrated}>
                 <Play class="w-4 h-4 mr-2" /> Start Analysis
               </Button>
             {:else}
@@ -225,14 +485,19 @@
       </Card.Root>
 
       <!-- Live Shot Log -->
-      <Card.Root class="bg-[#1a1d24] border-gray-800 flex-1">
+      <Card.Root class="bg-[#1a1d24] border-gray-800">
         <Card.Header class="pb-2">
           <Card.Title class="text-white">Live Shot Log</Card.Title>
         </Card.Header>
-        <Card.Content class="p-0">
+        <Card.Content class="p-0 max-h-[400px] overflow-y-auto">
           <div class="flex flex-col">
             {#each logs as log}
-              <div class="flex items-center gap-4 p-4 border-b border-gray-800 last:border-0 hover:bg-white/5 transition-colors">
+              <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+              <div
+                class="flex items-center gap-4 p-4 border-b border-gray-800 last:border-0 cursor-pointer transition-colors
+                  {selectedShotId === log.id ? 'bg-white/10' : 'hover:bg-white/5'}"
+                onclick={() => selectedShotId = selectedShotId === log.id ? null : log.id}
+              >
                 <div
                   class="w-6 h-6 rounded-full flex items-center justify-center {log.result === 'made'
                     ? 'bg-green-500/20 text-green-500'
@@ -257,7 +522,7 @@
     </div>
 
     <!-- Right Column: Stats & Chart -->
-    <div class="flex flex-col gap-6">
+    <div class="flex flex-col gap-6 self-start sticky top-6">
       <!-- Stats Grid -->
       <div class="grid grid-cols-2 gap-4">
         <Card.Root class="bg-[#1a1d24] border-gray-800">
@@ -287,9 +552,8 @@
       </div>
 
       <!-- Shot Chart -->
-      <Card.Root class="bg-[#1a1d24] border-gray-800 flex-1 flex flex-col h-[500px]">
+      <Card.Root class="bg-[#1a1d24] border-gray-800 flex flex-col h-[500px]">
         <Card.Header class="pb-2">
-          <!-- Tabs (Mock) -->
           <div class="flex bg-[#0f1116] rounded-lg p-1 w-full">
             <button class="flex-1 py-1 text-sm font-medium rounded bg-[#1a1d24] text-white shadow">All</button>
             <button class="flex-1 py-1 text-sm font-medium text-gray-400 hover:text-white">Made</button>
@@ -298,39 +562,42 @@
           </div>
         </Card.Header>
         <Card.Content class="flex-1 relative p-4 min-h-0">
-          <!-- Basketball Court Visualization -->
           <div class="w-full h-full relative" bind:clientWidth={containerWidth} bind:clientHeight={containerHeight}>
-            <Chart data={shotPoints} x="x" y="y" xDomain={[0, 50]} yDomain={[0, 47]} padding={chartPadding}>
+            <Chart data={shotPoints} x="x" y="y" xDomain={[0, 50]} yDomain={[47, 0]} padding={chartPadding}>
               <Svg>
-                <!-- Court Background -->
                 <svg width={innerWidth} height={innerHeight} viewBox="0 0 50 47" preserveAspectRatio="none" style="overflow: visible;">
                   <g class="court-lines" stroke="#374151" stroke-width="0.5" fill="none">
-                    <!-- Half Court Outline -->
                     <rect x="0" y="0" width="50" height="47" vector-effect="non-scaling-stroke" />
-                    <!-- Key -->
                     <rect x="17" y="0" width="16" height="19" vector-effect="non-scaling-stroke" />
-                    <!-- Free Throw Circle -->
                     <circle cx="25" cy="19" r="6" vector-effect="non-scaling-stroke" />
-                    <!-- 3 Point Line (Simplified Arc) -->
-                    <path d="M 3 0 L 3 14 Q 25 35 47 14 L 47 0" vector-effect="non-scaling-stroke" />
-                    <!-- Hoop -->
+                    <path d="M 3 0 L 3 14 Q 25 43 47 14 L 47 0" vector-effect="non-scaling-stroke" />
                     <circle cx="25" cy="5.25" r="0.75" stroke="#ef4444" vector-effect="non-scaling-stroke" />
-                    <!-- Backboard -->
                     <line x1="22" y1="4" x2="28" y2="4" vector-effect="non-scaling-stroke" />
                   </g>
                 </svg>
 
-                <!-- Shots -->
                 <Points>
                   {#snippet children({ points })}
                     {#each points as point}
+                      {#if selectedShotId === point.data.id}
+                        <!-- Highlight ring for selected shot -->
+                        <circle
+                          cx={point.x}
+                          cy={point.y}
+                          r="4"
+                          fill="none"
+                          stroke="white"
+                          stroke-width="0.6"
+                          class="animate-pulse"
+                        />
+                      {/if}
                       <circle
                         cx={point.x}
                         cy={point.y}
-                        r="1.5"
+                        r={selectedShotId === point.data.id ? "2.5" : "2"}
                         fill={point.data.result === "made" ? "#10b981" : "#ef4444"}
                         stroke="none"
-                        class="transition-all duration-300 hover:r-2"
+                        class="transition-all duration-300"
                       />
                     {/each}
                   {/snippet}
@@ -352,9 +619,14 @@
         </div>
         <div>
           <h2 class="text-2xl font-bold text-white mb-2">Ready to Analyze?</h2>
-          <p class="text-gray-400">Connect your camera to start tracking shots and viewing live analytics.</p>
+          <p class="text-gray-400">Connect your camera or simulate with a video file to start tracking shots.</p>
         </div>
-        <Button onclick={handleStartCamera} size="lg" class="w-full font-bold text-lg h-12">Start Camera</Button>
+        <div class="flex flex-col gap-3">
+          <Button onclick={handleStartCamera} size="lg" class="w-full font-bold text-lg h-12">Start Camera</Button>
+          <Button onclick={handleStartSimulation} variant="secondary" size="lg" class="w-full font-bold text-lg h-12">
+            <Play class="w-5 h-5 mr-2" /> Simulate Video
+          </Button>
+        </div>
       </div>
     </div>
   {/if}
