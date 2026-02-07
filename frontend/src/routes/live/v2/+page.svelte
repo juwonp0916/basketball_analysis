@@ -119,7 +119,7 @@
     simulationMode = true;
 
     videoElement.crossOrigin = "anonymous";
-    videoElement.src = `${BACKEND_URL}/video/video1.mp4`;
+    videoElement.src = `${BACKEND_URL}/video/video5.mp4`;
 
     await new Promise<void>((resolve) => {
       videoElement!.addEventListener("canplay", () => resolve(), { once: true });

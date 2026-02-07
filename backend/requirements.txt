@@ -31,12 +31,15 @@ easyocr>=1.6.0
 pytesseract>=0.3.8
 
 # Data handling
+pyyaml>=6.0.0
 h5py>=3.1.0
 jsonlines>=3.0.0
 tqdm>=4.62.0
 pillow>=8.3.0
 
-# Web framework (for existing frontend)
+# Web framework
+fastapi>=0.100.0
+uvicorn>=0.23.0
 flask>=2.0.0
 flask-cors>=3.0.0
 
