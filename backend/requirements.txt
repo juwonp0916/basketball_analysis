@@ -14,8 +14,6 @@ pandas>=1.3.0
 # Computer Vision and ML
 albumentations>=1.3.0
 timm>=0.6.0
-segment-anything
-detectron2
 transformers>=4.20.0
 
 # Tracking and Detection
