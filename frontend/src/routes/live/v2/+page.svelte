@@ -30,8 +30,23 @@
   let teamsConfigured = $state(false);
 
   const AVAILABLE_COLORS = [
-    "red", "blue", "green", "yellow", "orange", "purple", "pink", "cyan",
-    "white", "black", "gray", "brown", "navy", "maroon", "lime", "teal", "gold"
+    "red",
+    "blue",
+    "green",
+    "yellow",
+    "orange",
+    "purple",
+    "pink",
+    "cyan",
+    "white",
+    "black",
+    "gray",
+    "brown",
+    "navy",
+    "maroon",
+    "lime",
+    "teal",
+    "gold",
   ];
 
   const CALIBRATION_LABELS = [
@@ -164,10 +179,7 @@
     const scaleX = videoElement.videoWidth / videoElement.clientWidth;
     const scaleY = videoElement.videoHeight / videoElement.clientHeight;
 
-    calibrationPoints = [
-      ...calibrationPoints,
-      { x: clickX * scaleX, y: clickY * scaleY },
-    ];
+    calibrationPoints = [...calibrationPoints, { x: clickX * scaleX, y: clickY * scaleY }];
   }
 
   function resetCalibration() {
@@ -389,31 +401,17 @@
           </div>
         {/if}
         <!-- svelte-ignore a11y_media_has_caption -->
-        <video
-          bind:this={videoElement}
-          class="w-full h-full object-cover"
-          autoplay
-          playsinline
-          muted
-          crossorigin="anonymous"
-        ></video>
+        <video bind:this={videoElement} class="w-full h-full object-cover" autoplay playsinline muted crossorigin="anonymous"></video>
 
         <!-- Calibration Overlay -->
         {#if calibrationMode && videoElement}
           <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-          <div
-            class="absolute inset-0 cursor-crosshair"
-            onclick={handleCalibrationClick}
-          >
+          <div class="absolute inset-0 cursor-crosshair" onclick={handleCalibrationClick}>
             <svg class="absolute inset-0 w-full h-full" style="pointer-events: none;">
               <!-- Connecting lines -->
               {#if calibrationPoints.length >= 2}
                 <!-- Baseline segments -->
-                {#each [
-                  [0, 1],
-                  [1, 2],
-                  [2, 3],
-                ] as [a, b]}
+                {#each [[0, 1], [1, 2], [2, 3]] as [a, b]}
                   {#if calibrationPoints.length > b}
                     {@const pa = toDisplayCoords(calibrationPoints[a])}
                     {@const pb = toDisplayCoords(calibrationPoints[b])}
@@ -448,30 +446,54 @@
                 <text x={dp.x} y={dp.y + 1} text-anchor="middle" dominant-baseline="middle" fill="black" font-size="10" font-weight="bold">
                   {i + 1}
                 </text>
-                <text x={dp.x + 14} y={dp.y + 4} fill="white" font-size="11" font-weight="600" style="text-shadow: 0 1px 3px rgba(0,0,0,0.8);">
+                <text
+                  x={dp.x + 14}
+                  y={dp.y + 4}
+                  fill="white"
+                  font-size="11"
+                  font-weight="600"
+                  style="text-shadow: 0 1px 3px rgba(0,0,0,0.8);"
+                >
                   {CALIBRATION_LABELS[i]}
                 </text>
               {/each}
             </svg>
 
             <!-- Calibration instructions + action buttons -->
-            <div class="absolute top-4 left-1/2 -translate-x-1/2 bg-black/80 rounded-lg px-4 py-2 text-center pointer-events-auto flex flex-col items-center gap-2">
+            <div
+              class="absolute top-4 left-1/2 -translate-x-1/2 bg-black/80 rounded-lg px-4 py-2 text-center pointer-events-auto flex flex-col items-center gap-2"
+            >
               {#if calibrationPoints.length < 6}
                 <p class="text-sm font-medium text-white pointer-events-none">
-                  Click point {calibrationPoints.length + 1}/6: <span class="text-blue-400">{CALIBRATION_LABELS[calibrationPoints.length]}</span>
+                  Click point {calibrationPoints.length + 1}/6:
+                  <span class="text-blue-400">{CALIBRATION_LABELS[calibrationPoints.length]}</span>
                 </p>
               {:else}
                 <p class="text-sm font-medium text-green-400 pointer-events-none">All 6 points placed. Confirm or reset.</p>
               {/if}
               <div class="flex gap-3">
-              <Button onclick={(e: MouseEvent) => { e.stopPropagation(); resetCalibration(); }} variant="secondary" size="sm">
-                <RotateCcw class="w-4 h-4 mr-1" /> Reset
-              </Button>
-              {#if calibrationPoints.length === 6}
-                <Button onclick={(e: MouseEvent) => { e.stopPropagation(); confirmCalibration(); }} size="sm" class="bg-green-600 hover:bg-green-700">
-                  <Check class="w-4 h-4 mr-1" /> Confirm Calibration
+                <Button
+                  onclick={(e: MouseEvent) => {
+                    e.stopPropagation();
+                    resetCalibration();
+                  }}
+                  variant="secondary"
+                  size="sm"
+                >
+                  <RotateCcw class="w-4 h-4 mr-1" /> Reset
                 </Button>
-              {/if}
+                {#if calibrationPoints.length === 6}
+                  <Button
+                    onclick={(e: MouseEvent) => {
+                      e.stopPropagation();
+                      confirmCalibration();
+                    }}
+                    size="sm"
+                    class="bg-green-600 hover:bg-green-700"
+                  >
+                    <Check class="w-4 h-4 mr-1" /> Confirm Calibration
+                  </Button>
+                {/if}
               </div>
             </div>
           </div>
@@ -482,9 +504,7 @@
           <div class="absolute inset-0 bg-black/70 flex items-center justify-center">
             <div class="bg-[#1a1d24] rounded-xl p-6 max-w-md w-full mx-4 border border-gray-700">
               <h3 class="text-xl font-bold text-white mb-4 text-center">Team Colors Setup</h3>
-              <p class="text-gray-400 text-sm mb-6 text-center">
-                Select jersey colors for each team to enable team-based shot tracking.
-              </p>
+              <p class="text-gray-400 text-sm mb-6 text-center">Select jersey colors for each team to enable team-based shot tracking.</p>
 
               <div class="space-y-4 mb-6">
                 <div>
@@ -517,14 +537,8 @@
               {/if}
 
               <div class="flex gap-3">
-                <Button onclick={skipTeamSetup} variant="secondary" class="flex-1">
-                  Skip
-                </Button>
-                <Button
-                  onclick={confirmTeamColors}
-                  class="flex-1 bg-green-600 hover:bg-green-700"
-                  disabled={team0Color === team1Color}
-                >
+                <Button onclick={skipTeamSetup} variant="secondary" class="flex-1">Skip</Button>
+                <Button onclick={confirmTeamColors} class="flex-1 bg-green-600 hover:bg-green-700" disabled={team0Color === team1Color}>
                   <Check class="w-4 h-4 mr-2" /> Confirm
                 </Button>
               </div>
@@ -599,7 +613,7 @@
               <div
                 class="flex items-center gap-4 p-4 border-b border-gray-800 last:border-0 cursor-pointer transition-colors
                   {selectedShotId === log.id ? 'bg-white/10' : 'hover:bg-white/5'}"
-                onclick={() => selectedShotId = selectedShotId === log.id ? null : log.id}
+                onclick={() => (selectedShotId = selectedShotId === log.id ? null : log.id)}
               >
                 <div
                   class="w-6 h-6 rounded-full flex items-center justify-center {log.result === 'made'
@@ -637,19 +651,25 @@
         <Card.Root class="bg-[#1a1d24] border-gray-800">
           <Card.Content class="p-4">
             <p class="text-gray-400 text-sm mb-1">Field Goal %</p>
-            <p class="text-2xl font-bold text-white">{stats.percentages.fieldGoal}%</p>
+            <p class="text-2xl font-bold text-white">
+              {Number.isFinite(stats.percentages.fieldGoal) ? stats.percentages.fieldGoal.toFixed(2) : "0.0"}%
+            </p>
           </Card.Content>
         </Card.Root>
         <Card.Root class="bg-[#1a1d24] border-gray-800">
           <Card.Content class="p-4">
             <p class="text-gray-400 text-sm mb-1">2-Point %</p>
-            <p class="text-2xl font-bold text-white">{stats.percentages.twoPoint}%</p>
+            <p class="text-2xl font-bold text-white">
+              {Number.isFinite(stats.percentages.twoPoint) ? stats.percentages.twoPoint.toFixed(2) : "0.0"}%
+            </p>
           </Card.Content>
         </Card.Root>
         <Card.Root class="bg-[#1a1d24] border-gray-800">
           <Card.Content class="p-4">
             <p class="text-gray-400 text-sm mb-1">3-Point %</p>
-            <p class="text-2xl font-bold text-white">{stats.percentages.threePoint}%</p>
+            <p class="text-2xl font-bold text-white">
+              {Number.isFinite(stats.percentages.threePoint) ? stats.percentages.threePoint.toFixed(2) : "0.0"}%
+            </p>
           </Card.Content>
         </Card.Root>
       </div>
@@ -666,7 +686,7 @@
         </Card.Header>
         <Card.Content class="flex-1 relative p-4 min-h-0">
           <div class="w-full h-full relative" bind:clientWidth={containerWidth} bind:clientHeight={containerHeight}>
-            <Chart data={shotPoints} x="x" y="y" xDomain={[0, 50]} yDomain={[47, 0]} padding={chartPadding}>
+            <Chart data={shotPoints} x="x" y="y" xDomain={[0, 150]} yDomain={[140, 0]} padding={chartPadding}>
               <Svg>
                 <svg width={innerWidth} height={innerHeight} viewBox="0 0 50 47" preserveAspectRatio="none" style="overflow: visible;">
                   <g class="court-lines" stroke="#374151" stroke-width="0.5" fill="none">
@@ -684,20 +704,12 @@
                     {#each points as point}
                       {#if selectedShotId === point.data.id}
                         <!-- Highlight ring for selected shot -->
-                        <circle
-                          cx={point.x}
-                          cy={point.y}
-                          r="4"
-                          fill="none"
-                          stroke="white"
-                          stroke-width="0.6"
-                          class="animate-pulse"
-                        />
+                        <circle cx={point.x} cy={point.y} r="5" fill="none" stroke="white" stroke-width="0.6" class="animate-pulse" />
                       {/if}
                       <circle
                         cx={point.x}
                         cy={point.y}
-                        r={selectedShotId === point.data.id ? "2.5" : "2"}
+                        r={selectedShotId === point.data.id ? "3.5" : "3"}
                         fill={point.data.result === "made" ? "#10b981" : "#ef4444"}
                         stroke="none"
                         class="transition-all duration-300"
