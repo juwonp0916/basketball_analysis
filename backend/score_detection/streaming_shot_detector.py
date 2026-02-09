@@ -6,6 +6,7 @@ via WebRTC rather than from a video file.
 """
 
 import cv2
+import logging
 import math
 import numpy as np
 import os
@@ -13,6 +14,8 @@ import yaml
 from typing import Optional, List, Tuple, Dict, Any
 from dataclasses import dataclass, field
 from ultralytics import YOLO
+
+logger = logging.getLogger(__name__)
 
 # Load config relative to this file's location
 _config_dir = os.path.dirname(__file__)
@@ -37,6 +40,8 @@ class ShotEvent:
     court_position: Optional[Tuple[float, float]]  # (x_meters, y_meters)
     shot_type: Optional[str]  # '2pt' or '3pt'
     zone: Optional[int]
+    team_id: Optional[int] = None  # 0 or 1
+    team_confidence: float = 0.0
 
 
 @dataclass
@@ -131,6 +136,10 @@ class StreamingShotDetector:
         # Mutable state
         self.state = DetectorState()
 
+        # Team detection
+        from team_detector import StreamingTeamDetector
+        self.team_detector = StreamingTeamDetector()
+
         # Device configuration
         self.device = env.get('device', 0)
 
@@ -179,6 +188,19 @@ class StreamingShotDetector:
             return self.shot_localizer is not None
         except Exception:
             return False
+
+    def set_team_colors(self, team0_color: str, team1_color: str) -> bool:
+        """
+        Set team colors for jersey-based team detection.
+
+        Args:
+            team0_color: Color name for team 0 (e.g., 'red', 'blue')
+            team1_color: Color name for team 1
+
+        Returns:
+            True if colors were set successfully
+        """
+        return self.team_detector.set_team_colors(team0_color, team1_color)
 
     def process_frame(
         self,
@@ -745,6 +767,27 @@ class StreamingShotDetector:
                 print(f"[StreamingShotDetector] Court localization failed for "
                       f"shooter_pos=({shooter_pos['x']:.1f}, {shooter_pos['y']:.1f}): {e}")
 
+        # Team detection (only if configured and we have shooter position)
+        team_id = None
+        team_confidence = 0.0
+        logger.info(f"Team detection check: configured={self.team_detector.is_configured}, shooter_pos={shooter_pos is not None}, frame={self.state.last_frame is not None}")
+        if self.team_detector.is_configured and shooter_pos and self.state.last_frame is not None:
+            try:
+                team_id, team_confidence, bbox = self.team_detector.classify_from_position(
+                    frame=self.state.last_frame,
+                    shooter_pos=shooter_pos,
+                    model_shoot=self.model_shoot,
+                    class_names_shoot=self.class_names_shoot,
+                    inference_dims=(self.inference_width, self.inference_height),
+                    frame_dims=(self.width, self.height),
+                    device=self.device
+                )
+                logger.info(f"Team detection result: team_id={team_id}, confidence={team_confidence:.2f}, bbox={bbox}")
+            except Exception as e:
+                logger.exception(f"Team detection failed: {e}")
+        else:
+            logger.warning(f"Team detection skipped: configured={self.team_detector.is_configured}, shooter_pos={shooter_pos}, frame_exists={self.state.last_frame is not None}")
+
         return ShotEvent(
             shot_id=self.state.shot_id_counter,
             timestamp_ms=shot_data.get('timestamp', 0),
@@ -753,7 +796,9 @@ class StreamingShotDetector:
             shooter_position=shooter_pos,
             court_position=court_position,
             shot_type=shot_type,
-            zone=zone
+            zone=zone,
+            team_id=team_id,
+            team_confidence=team_confidence
         )
 
     def _deduplicate_shot_group(self, shot_group: List) -> Optional[Dict]:

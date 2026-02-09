@@ -23,6 +23,17 @@
   let calibrationPoints = $state<{ x: number; y: number }[]>([]);
   let isCalibrated = $state(false);
 
+  // --- Team Color State ---
+  let teamSetupMode = $state(false);
+  let team0Color = $state("red");
+  let team1Color = $state("blue");
+  let teamsConfigured = $state(false);
+
+  const AVAILABLE_COLORS = [
+    "red", "blue", "green", "yellow", "orange", "purple", "pink", "cyan",
+    "white", "black", "gray", "brown", "navy", "maroon", "lime", "teal", "gold"
+  ];
+
   const CALIBRATION_LABELS = [
     "Baseline Left Sideline",
     "Baseline Left Penalty Box",
@@ -182,8 +193,8 @@
       if (data.success) {
         isCalibrated = true;
         calibrationMode = false;
-        // Resume video playback
-        videoElement.play();
+        // Show team setup after calibration
+        teamSetupMode = true;
       } else {
         alert(`Calibration failed: ${data.error || "Unknown error"}`);
       }
@@ -191,6 +202,39 @@
       console.error("Calibration request failed:", err);
       alert("Could not send calibration to server.");
     }
+  }
+
+  async function confirmTeamColors() {
+    if (team0Color === team1Color) {
+      alert("Please select different colors for each team.");
+      return;
+    }
+
+    try {
+      const res = await fetch(`${BACKEND_URL}/team-colors`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ team0_color: team0Color, team1_color: team1Color }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        teamsConfigured = true;
+        teamSetupMode = false;
+        // Resume video playback
+        if (videoElement) videoElement.play();
+      } else {
+        alert(`Team setup failed: ${data.error || "Unknown error"}`);
+      }
+    } catch (err) {
+      console.error("Team colors request failed:", err);
+      alert("Could not send team colors to server.");
+    }
+  }
+
+  function skipTeamSetup() {
+    teamSetupMode = false;
+    // Resume video playback without team detection
+    if (videoElement) videoElement.play();
   }
 
   // Get calibration point position in element-relative pixels (for SVG overlay display)
@@ -283,6 +327,8 @@
       calibrationMode = false;
       calibrationPoints = [];
       isCalibrated = false;
+      teamSetupMode = false;
+      teamsConfigured = false;
       stream = null;
     } else {
       stopCamera();
@@ -431,6 +477,61 @@
           </div>
         {/if}
 
+        <!-- Team Setup Overlay -->
+        {#if teamSetupMode}
+          <div class="absolute inset-0 bg-black/70 flex items-center justify-center">
+            <div class="bg-[#1a1d24] rounded-xl p-6 max-w-md w-full mx-4 border border-gray-700">
+              <h3 class="text-xl font-bold text-white mb-4 text-center">Team Colors Setup</h3>
+              <p class="text-gray-400 text-sm mb-6 text-center">
+                Select jersey colors for each team to enable team-based shot tracking.
+              </p>
+
+              <div class="space-y-4 mb-6">
+                <div>
+                  <label class="block text-sm font-medium text-gray-300 mb-2">Team 1 Jersey Color</label>
+                  <select
+                    bind:value={team0Color}
+                    class="w-full bg-[#0f1116] border border-gray-600 rounded-lg px-4 py-2 text-white capitalize"
+                  >
+                    {#each AVAILABLE_COLORS as color}
+                      <option value={color} class="capitalize">{color}</option>
+                    {/each}
+                  </select>
+                </div>
+
+                <div>
+                  <label class="block text-sm font-medium text-gray-300 mb-2">Team 2 Jersey Color</label>
+                  <select
+                    bind:value={team1Color}
+                    class="w-full bg-[#0f1116] border border-gray-600 rounded-lg px-4 py-2 text-white capitalize"
+                  >
+                    {#each AVAILABLE_COLORS as color}
+                      <option value={color} class="capitalize">{color}</option>
+                    {/each}
+                  </select>
+                </div>
+              </div>
+
+              {#if team0Color === team1Color}
+                <p class="text-red-400 text-sm mb-4 text-center">Please select different colors for each team.</p>
+              {/if}
+
+              <div class="flex gap-3">
+                <Button onclick={skipTeamSetup} variant="secondary" class="flex-1">
+                  Skip
+                </Button>
+                <Button
+                  onclick={confirmTeamColors}
+                  class="flex-1 bg-green-600 hover:bg-green-700"
+                  disabled={team0Color === team1Color}
+                >
+                  <Check class="w-4 h-4 mr-2" /> Confirm
+                </Button>
+              </div>
+            </div>
+          </div>
+        {/if}
+
         <!-- Video Overlay Controls -->
         <div class="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/80 to-transparent flex justify-between items-center">
           <span class="text-sm font-mono">1:02:14</span>
@@ -455,8 +556,10 @@
               <p class="text-sm text-gray-400">
                 {#if simulationMode && !isCalibrated}
                   Calibration required
+                {:else if simulationMode && isCalibrated && teamSetupMode}
+                  Configure team colors
                 {:else if simulationMode && isCalibrated}
-                  Calibrated - Ready for analysis
+                  Ready for analysis {teamsConfigured ? `(Teams: ${team0Color} vs ${team1Color})` : "(No team tracking)"}
                 {:else}
                   Duration: {recordingDuration}
                 {/if}

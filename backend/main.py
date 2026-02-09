@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from src.utils.webrtc_manager import ConnectionManager
-from schema import CalibrationRequest, CalibrationResponse, DetectionStatusResponse
+from schema import CalibrationRequest, CalibrationResponse, DetectionStatusResponse, TeamColorsRequest, TeamColorsResponse
 
 VIDEO_DIR = Path(__file__).parent / "score_detection"
 
@@ -123,6 +123,37 @@ async def get_calibration() -> CalibrationResponse:
         is_calibrated=cal["is_calibrated"],
         points=cal["points"]
     )
+
+
+# ============ Team Colors Endpoints ============
+
+@app.post("/team-colors", response_model=TeamColorsResponse)
+async def set_team_colors(request: TeamColorsRequest) -> TeamColorsResponse:
+    """
+    Set team jersey colors for team-based shot tracking.
+
+    Available colors: red, blue, green, yellow, orange, purple, pink, cyan,
+    white, black, gray, brown, navy, maroon, lime, teal, gold
+    """
+    if request.team0_color == request.team1_color:
+        return TeamColorsResponse(
+            success=False,
+            error="Team colors must be different"
+        )
+
+    success = manager.set_team_colors(request.team0_color, request.team1_color)
+
+    if success:
+        return TeamColorsResponse(
+            success=True,
+            team0_color=request.team0_color,
+            team1_color=request.team1_color
+        )
+    else:
+        return TeamColorsResponse(
+            success=False,
+            error="Invalid color name. Available: red, blue, green, yellow, orange, purple, pink, cyan, white, black, gray, brown, navy, maroon, lime, teal, gold"
+        )
 
 
 # ============ Detection Control Endpoints ============

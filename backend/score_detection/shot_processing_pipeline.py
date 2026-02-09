@@ -136,6 +136,22 @@ class ShotProcessingPipeline:
             logger.info(f"Calibration updated: {len(points)} points, {dimensions}")
         return success
 
+    def set_team_colors(self, team0_color: str, team1_color: str) -> bool:
+        """
+        Set team colors for jersey-based team detection.
+
+        Args:
+            team0_color: Color name for team 0 (e.g., 'red', 'blue')
+            team1_color: Color name for team 1
+
+        Returns:
+            True if colors were set successfully
+        """
+        success = self.detector.set_team_colors(team0_color, team1_color)
+        if success:
+            logger.info(f"Team colors set: team0={team0_color}, team1={team1_color}")
+        return success
+
     def reset_stats(self) -> None:
         """Reset accumulated statistics"""
         self.detector.reset()
@@ -286,7 +302,9 @@ class ShotProcessingPipeline:
             type=shot_type_literal,
             result=result_literal,
             location=location,
-            coord=Point(x=coord_x, y=coord_y)
+            coord=Point(x=coord_x, y=coord_y),
+            team_id=shot_event.team_id,
+            team_confidence=shot_event.team_confidence
         )
 
         return ShotPayload(

@@ -30,6 +30,8 @@ class Shot(BaseModel):
     result: Literal["made", "missed"]
     location: str
     coord: Point
+    team_id: Optional[int] = None  # 0 or 1, None if not detected
+    team_confidence: float = 0.0
 
 
 class FrameSyncPayload(BaseModel):
@@ -74,3 +76,17 @@ class DetectionStatusResponse(BaseModel):
     status: str
     is_detecting: bool = False
     is_calibrated: bool = False
+
+
+class TeamColorsRequest(BaseModel):
+    """Request schema for setting team colors"""
+    team0_color: str  # Color name e.g., "red", "blue"
+    team1_color: str
+
+
+class TeamColorsResponse(BaseModel):
+    """Response schema for team colors operations"""
+    success: bool
+    team0_color: Optional[str] = None
+    team1_color: Optional[str] = None
+    error: Optional[str] = None
