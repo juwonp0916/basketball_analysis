@@ -276,22 +276,25 @@ class ShotProcessingPipeline:
         # Determine location string
         location = self._get_location_string(shot_event)
 
-        # Get coordinates in FIBA meters first, then convert to frontend chart space.
-        # FIBA system: X ∈ [-7.5, 7.5], Y ∈ [0, 14] (origin at center of baseline)
+        # Get coordinates in court space first, then convert to frontend chart space.
+        # Court system: X ∈ [0, 15], Y ∈ [0, 14] (origin at left baseline corner)
         # Frontend chart: X ∈ [0, 50], Y ∈ [0, 47] (origin at baseline-left corner)
-        fiba_x = 0.0
-        fiba_y = 0.0
+        court_x = 0.0
+        court_y = 0.0
         if shot_event.court_position and shot_event.court_position[0] is not None:
-            fiba_x = shot_event.court_position[0]
-            fiba_y = shot_event.court_position[1]
+            court_x = shot_event.court_position[0]
+            court_y = shot_event.court_position[1]
         elif shot_event.shooter_position:
-            # Normalize pixel position to FIBA court coordinates
-            fiba_x = shot_event.shooter_position['x'] / self.frame_width * 15.0 - 7.5
-            fiba_y = shot_event.shooter_position['y'] / self.frame_height * 14.0
+            # Normalize pixel position to court coordinates
+            court_x = shot_event.shooter_position['x'] / self.frame_width * 15.0
+            court_y = shot_event.shooter_position['y'] / self.frame_height * 14.0
 
-        # Convert FIBA meters → frontend chart coordinates
-        coord_x = (fiba_x + 7.5) / 15.0 * 50.0
-        coord_y = fiba_y / 14.0 * 47.0
+        # Convert court meters → frontend chart coordinates
+        # X: [0, 15]m → [0, 50] (left to right)
+        coord_x = court_x / 15.0 * 50.0
+        # Y: [0, 14]m → [47, 0] (baseline at top, half-court at bottom)
+        # Flip Y-axis: baseline (Y=0) should map to top of chart
+        coord_y = (14.0 - court_y) / 14.0 * 47.0
 
         shot_type_literal = "3pt" if shot_event.shot_type == '3pt' else "2pt"
         result_literal = "made" if shot_event.is_made else "missed"

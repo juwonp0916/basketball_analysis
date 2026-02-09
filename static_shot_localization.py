@@ -451,14 +451,13 @@ class StaticShotLocalizer:
 
         print(f"Court position: ({court_coords[0]:.2f}m, {court_coords[1]:.2f}m)")
 
-        # Validate bounds (FIBA half-court: X ∈ [-7.5, 7.5], Y ∈ [0, 14])
+        # Validate bounds (court half-court: X ∈ [0, 15], Y ∈ [0, 14])
         sys.path.insert(0, 'backend/score_detection')
         from constants import COURT_WIDTH, COURT_HALF_LENGTH
-        half_width = COURT_WIDTH / 2
 
-        if not (-half_width <= court_coords[0] <= half_width and 0 <= court_coords[1] <= COURT_HALF_LENGTH):
-            print(f"WARNING: Position out of FIBA court bounds!")
-            print(f"  Valid range: X ∈ [{-half_width:.1f}, {half_width:.1f}]m, Y ∈ [0, {COURT_HALF_LENGTH}]m")
+        if not (0 <= court_coords[0] <= COURT_WIDTH and 0 <= court_coords[1] <= COURT_HALF_LENGTH):
+            print(f"WARNING: Position out of court bounds!")
+            print(f"  Valid range: X ∈ [0, {COURT_WIDTH}]m, Y ∈ [0, {COURT_HALF_LENGTH}]m")
         else:
             print("✓ Position within valid FIBA court bounds")
 
@@ -562,16 +561,15 @@ class StaticShotLocalizer:
             court_x, court_y = self.court_position
 
             # Convert court coordinates (meters) to image pixel coordinates
-            # Court: X ∈ [-7.5, 7.5]m (left to right), Y ∈ [0, 14]m (baseline to half-court)
-            # Image: (0,0) at top-left, baseline at bottom
+            # Court: X ∈ [0, 15]m (left to right), Y ∈ [0, 14]m (baseline to half-court)
+            # Image: (0,0) at top-left (baseline-left), baseline at top
 
-            # X: Shift from [-7.5, 7.5]m to [0, 15]m, then scale to image width
+            # X: Scale [0, 15]m to image width
             from constants import COURT_WIDTH, COURT_HALF_LENGTH
-            img_x = int((court_x + COURT_WIDTH/2) / COURT_WIDTH * court_width)
+            img_x = int(court_x / COURT_WIDTH * court_width)
 
-            # Y: Invert because y=0 (baseline) should be at bottom (court_height)
-            #    and y=14m (half-court) should be at top (0)
-            img_y = int((COURT_HALF_LENGTH - court_y) / COURT_HALF_LENGTH * court_height)
+            # Y: Map [0, 14]m to image height (0 at top = baseline, height at bottom = half-court)
+            img_y = int(court_y / COURT_HALF_LENGTH * court_height)
 
             # Draw marker
             cv2.circle(court_img, (img_x, img_y), 20, (255, 255, 255), -1)
@@ -638,7 +636,7 @@ class StaticShotLocalizer:
             'court_position_meters': {
                 'x': float(self.court_position[0]) if self.court_position else None,
                 'y': float(self.court_position[1]) if self.court_position else None,
-                'description': 'FIBA half-court coordinates: X ∈ [-7.5, 7.5]m (left to right), Y ∈ [0, 14]m (baseline to half-court)'
+                'description': 'Court coordinates: X ∈ [0, 15]m (left to right), Y ∈ [0, 14]m (baseline to half-court)'
             },
             'zone': int(self.zone) if self.zone else None,
             'shot_type': None,

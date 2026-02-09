@@ -4,12 +4,12 @@
 COURT_WIDTH = 15.0  # meters (full width)
 COURT_HALF_LENGTH = 14.0  # meters (baseline to half-court line)
 
-# Coordinate system: Origin at center of baseline
-# X: -7.5m (left) to +7.5m (right)
+# Coordinate system: Origin at left corner of baseline
+# X: 0m (left) to 15m (right)
 # Y: 0m (baseline) to +14m (half-court line)
 
 # Basket position
-BASKET_X = 0.0  # Centered
+BASKET_X = 7.5  # Center of court (0-15 range)
 BASKET_Y = 1.575  # meters from baseline
 
 # Penalty box / Key dimensions
@@ -27,12 +27,12 @@ THREE_PT_CORNER_DISTANCE = 6.6  # meters along baseline direction
 # 6-Point Calibration System
 # Points in clockwise order: Baseline (L→R), then Free Throw Line (L→R)
 CALIBRATION_POINTS_FIBA = [
-    (-7.5, 0.0),   # 1. Baseline Left Sideline
-    (-2.9, 0.0),   # 2. Baseline Left Penalty
-    (2.9, 0.0),    # 3. Baseline Right Penalty
-    (7.5, 0.0),    # 4. Baseline Right Sideline
-    (-2.9, 5.8),   # 5. FT Line Left Penalty
-    (2.9, 5.8),    # 6. FT Line Right Penalty
+    (0.0, 0.0),    # 1. Baseline Left Sideline
+    (4.6, 0.0),    # 2. Baseline Left Penalty (7.5-2.9)
+    (10.4, 0.0),   # 3. Baseline Right Penalty (7.5+2.9)
+    (15.0, 0.0),   # 4. Baseline Right Sideline
+    (4.6, 5.8),    # 5. FT Line Left Penalty
+    (10.4, 5.8),   # 6. FT Line Right Penalty
 ]
 
 CALIBRATION_LABELS = [

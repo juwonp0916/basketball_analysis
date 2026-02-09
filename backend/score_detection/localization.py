@@ -168,13 +168,12 @@ class ShotLocalizer:
         court_x = transformed_point[0][0][0]
         court_y = transformed_point[0][0][1]
 
-        # Validate bounds (FIBA half-court)
+        # Validate bounds (court half-court)
         from constants import COURT_WIDTH, COURT_HALF_LENGTH
-        half_width = COURT_WIDTH / 2
 
-        if court_x < -half_width or court_x > half_width or court_y < 0 or court_y > COURT_HALF_LENGTH:
+        if court_x < 0 or court_x > COURT_WIDTH or court_y < 0 or court_y > COURT_HALF_LENGTH:
             logger.log(INFO, f"WARNING: Transformed point ({court_x:.2f}m, {court_y:.2f}m) is out of court bounds " +
-                            f"({-half_width:.1f} to {half_width:.1f}m, 0 to {COURT_HALF_LENGTH}m)")
+                            f"(0 to {COURT_WIDTH}m, 0 to {COURT_HALF_LENGTH}m)")
 
         return (court_x, court_y)
 
@@ -196,11 +195,11 @@ class ShotLocalizer:
 
     def _court_to_image_coords(self, court_x, court_y):
         """
-        Convert FIBA court coordinates to image pixel coordinates
+        Convert court coordinates to image pixel coordinates
 
         Args:
-            court_x: X coordinate in meters (FIBA: -7.5m to +7.5m)
-            court_y: Y coordinate in meters (FIBA: 0m to 14m)
+            court_x: X coordinate in meters [0, 15] (left to right)
+            court_y: Y coordinate in meters [0, 14] (baseline to half-court)
 
         Returns:
             (img_x, img_y): Pixel coordinates in the court image
@@ -210,15 +209,15 @@ class ShotLocalizer:
 
         from constants import COURT_WIDTH, COURT_HALF_LENGTH
 
-        # Convert from FIBA coordinates (origin at center of baseline) to image coordinates
-        # FIBA: X ∈ [-7.5, +7.5]m, Y ∈ [0, 14]m (baseline to half-court)
-        # Image: top-left = half-court line, bottom-right = baseline (Y-axis is FLIPPED!)
+        # Convert from court coordinates to image coordinates
+        # Court: X ∈ [0, 15]m, Y ∈ [0, 14]m (baseline to half-court)
+        # Image: top-left = baseline-left, bottom-left = half-court-left (Y-axis is FLIPPED!)
 
-        # X: [-7.5, +7.5] -> [0, img_width] (left to right)
-        normalized_x = (court_x + COURT_WIDTH / 2) / COURT_WIDTH  # Shift and normalize to [0, 1]
+        # X: [0, 15] -> [0, img_width] (left to right)
+        normalized_x = court_x / COURT_WIDTH
 
-        # Y: [0, 14] -> [img_height, 0] (FLIP: baseline at bottom, half-court at top)
-        normalized_y = 1.0 - (court_y / COURT_HALF_LENGTH)  # Flip Y-axis
+        # Y: [0, 14] -> [0, img_height] (NOT flipped - 0 at top, 14 at bottom)
+        normalized_y = court_y / COURT_HALF_LENGTH
 
         img_x = int(normalized_x * self.court_img_width)
         img_y = int(normalized_y * self.court_img_height)
