@@ -20,6 +20,8 @@
   const BACKEND_URL = "http://127.0.0.1:8000";
   let simulationMode = $state(false);
   let calibrationMode = $state(false);
+  let calibrationModeSelection = $state(false);  // Show mode selector
+  let selectedCalibrationMode = $state<"4-point" | "6-point">("4-point");
   let calibrationPoints = $state<{ x: number; y: number }[]>([]);
   let isCalibrated = $state(false);
 
@@ -34,7 +36,7 @@
     "white", "black", "gray", "brown", "navy", "maroon", "lime", "teal", "gold"
   ];
 
-  const CALIBRATION_LABELS = [
+  const CALIBRATION_LABELS_6PT = [
     "Baseline Left Sideline",
     "Baseline Left Penalty Box",
     "Baseline Right Penalty Box",
@@ -43,7 +45,22 @@
     "Free Throw Line Right",
   ];
 
-  const CALIBRATION_COLORS = [
+  const CALIBRATION_LABELS_4PT = [
+    "Baseline Left Penalty Box",
+    "Baseline Right Penalty Box",
+    "Free Throw Line Left",
+    "Free Throw Line Right",
+  ];
+
+  const CALIBRATION_LABELS = $derived(
+    selectedCalibrationMode === "4-point" ? CALIBRATION_LABELS_4PT : CALIBRATION_LABELS_6PT
+  );
+
+  const expectedCalibrationPoints = $derived(
+    selectedCalibrationMode === "4-point" ? 4 : 6
+  );
+
+  const CALIBRATION_COLORS_6PT = [
     "#eab308", // yellow - sideline
     "#22c55e", // green - penalty box
     "#22c55e", // green - penalty box
@@ -51,6 +68,17 @@
     "#d946ef", // magenta - FT line
     "#d946ef", // magenta - FT line
   ];
+
+  const CALIBRATION_COLORS_4PT = [
+    "#22c55e", // green - penalty box
+    "#22c55e", // green - penalty box
+    "#d946ef", // magenta - FT line
+    "#d946ef", // magenta - FT line
+  ];
+
+  const CALIBRATION_COLORS = $derived(
+    selectedCalibrationMode === "4-point" ? CALIBRATION_COLORS_4PT : CALIBRATION_COLORS_6PT
+  );
 
   type FrameSyncPayload = {
     type: "frame_sync";
@@ -130,7 +158,7 @@
     simulationMode = true;
 
     videoElement.crossOrigin = "anonymous";
-    videoElement.src = `${BACKEND_URL}/video/video5.mp4`;
+    videoElement.src = `${BACKEND_URL}/video/video1.mp4`;
 
     await new Promise<void>((resolve) => {
       videoElement!.addEventListener("canplay", () => resolve(), { once: true });
@@ -146,15 +174,25 @@
     // Capture the stream from the video element
     stream = (videoElement as any).captureStream();
 
-    // Pause for calibration
+    // Pause for calibration mode selection
     videoElement.pause();
-    calibrationMode = true;
+    calibrationModeSelection = true;
   }
 
   // --- Calibration ---
 
   function handleCalibrationClick(event: MouseEvent) {
-    if (!videoElement || calibrationPoints.length >= 6) return;
+    console.log(`[Calibration Click] Current: ${calibrationPoints.length}/${expectedCalibrationPoints}`);
+
+    if (!videoElement) {
+      console.error('[Calibration Click] No video element');
+      return;
+    }
+
+    if (calibrationPoints.length >= expectedCalibrationPoints) {
+      console.log('[Calibration Click] Already at max points, ignoring');
+      return;
+    }
 
     const rect = videoElement.getBoundingClientRect();
     const clickX = event.clientX - rect.left;
@@ -164,10 +202,15 @@
     const scaleX = videoElement.videoWidth / videoElement.clientWidth;
     const scaleY = videoElement.videoHeight / videoElement.clientHeight;
 
+    const newPoint = { x: clickX * scaleX, y: clickY * scaleY };
+    console.log(`[Calibration Click] Adding point ${calibrationPoints.length + 1}:`, newPoint);
+
     calibrationPoints = [
       ...calibrationPoints,
-      { x: clickX * scaleX, y: clickY * scaleY },
+      newPoint,
     ];
+
+    console.log(`[Calibration Click] New length: ${calibrationPoints.length}`);
   }
 
   function resetCalibration() {
@@ -175,12 +218,14 @@
   }
 
   async function confirmCalibration() {
-    if (!videoElement || calibrationPoints.length !== 6) return;
+    const expectedPoints = selectedCalibrationMode === "4-point" ? 4 : 6;
+    if (!videoElement || calibrationPoints.length !== expectedPoints) return;
 
     const payload = {
       points: calibrationPoints.map((p) => [p.x, p.y]),
       image_width: videoElement.videoWidth,
       image_height: videoElement.videoHeight,
+      mode: selectedCalibrationMode,
     };
 
     try {
@@ -338,9 +383,17 @@
   function enterCalibrationMode() {
     if (!videoElement) return;
     videoElement.pause();
-    calibrationMode = true;
+    // Show mode selection instead of directly entering calibration
+    calibrationModeSelection = true;
     calibrationPoints = [];
     isCalibrated = false;
+  }
+
+  function startCalibrationWithMode(mode: "4-point" | "6-point") {
+    selectedCalibrationMode = mode;
+    calibrationModeSelection = false;
+    calibrationMode = true;
+    calibrationPoints = [];
   }
 
   onMount(() => {});
@@ -398,6 +451,54 @@
           crossorigin="anonymous"
         ></video>
 
+        <!-- Calibration Mode Selection Overlay -->
+        {#if calibrationModeSelection}
+          <div class="absolute inset-0 bg-black/70 flex items-center justify-center">
+            <div class="bg-[#1a1d24] rounded-xl p-6 max-w-md w-full mx-4 border border-gray-700">
+              <h3 class="text-xl font-bold text-white mb-4 text-center">Choose Calibration Method</h3>
+              <p class="text-gray-400 text-sm mb-6 text-center">
+                Select based on which court points are clearly visible in your camera view.
+              </p>
+
+              <div class="space-y-3">
+                <!-- 4-Point Option -->
+                <button
+                  onclick={() => startCalibrationWithMode("4-point")}
+                  class="w-full bg-gradient-to-r from-green-600 to-green-500 hover:from-green-500 hover:to-green-400 text-white font-semibold py-4 px-6 rounded-lg transition-all duration-200 transform hover:scale-105 flex flex-col items-start gap-1"
+                >
+                  <div class="flex items-center gap-2">
+                    <Crosshair class="w-5 h-5" />
+                    <span class="text-lg">4-Point (Paint Box Only)</span>
+                  </div>
+                  <span class="text-sm text-green-100 opacity-90">
+                    ✓ Recommended - Click 4 corners of the penalty box
+                  </span>
+                  <span class="text-xs text-green-100 opacity-75">
+                    Use when baseline sidelines are not visible
+                  </span>
+                </button>
+
+                <!-- 6-Point Option -->
+                <button
+                  onclick={() => startCalibrationWithMode("6-point")}
+                  class="w-full bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white font-semibold py-4 px-6 rounded-lg transition-all duration-200 transform hover:scale-105 flex flex-col items-start gap-1"
+                >
+                  <div class="flex items-center gap-2">
+                    <Crosshair class="w-5 h-5" />
+                    <span class="text-lg">6-Point (Full Baseline)</span>
+                  </div>
+                  <span class="text-sm text-blue-100 opacity-90">
+                    More accurate - Click full baseline + penalty box
+                  </span>
+                  <span class="text-xs text-blue-100 opacity-75">
+                    Use when entire baseline is visible
+                  </span>
+                </button>
+              </div>
+            </div>
+          </div>
+        {/if}
+
         <!-- Calibration Overlay -->
         {#if calibrationMode && videoElement}
           <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
@@ -429,16 +530,33 @@
                   {/if}
                 {/each}
               {/if}
-              {#if calibrationPoints.length >= 6}
-                <!-- FT line -->
-                {@const p4 = toDisplayCoords(calibrationPoints[4])}
-                {@const p5 = toDisplayCoords(calibrationPoints[5])}
-                <line x1={p4.x} y1={p4.y} x2={p5.x} y2={p5.y} stroke="#d946ef" stroke-width="2" opacity="0.7" />
-                <!-- Penalty box sides -->
-                {@const p1 = toDisplayCoords(calibrationPoints[1])}
-                {@const p2 = toDisplayCoords(calibrationPoints[2])}
-                <line x1={p1.x} y1={p1.y} x2={p4.x} y2={p4.y} stroke="#22c55e" stroke-width="2" opacity="0.7" />
-                <line x1={p2.x} y1={p2.y} x2={p5.x} y2={p5.y} stroke="#22c55e" stroke-width="2" opacity="0.7" />
+              {#if calibrationPoints.length >= expectedCalibrationPoints}
+                <!-- Draw complete box based on mode -->
+                {#if selectedCalibrationMode === "4-point"}
+                  <!-- 4-point mode: indices 0,1,2,3 -->
+                  {@const p0 = toDisplayCoords(calibrationPoints[0])}
+                  {@const p1 = toDisplayCoords(calibrationPoints[1])}
+                  {@const p2 = toDisplayCoords(calibrationPoints[2])}
+                  {@const p3 = toDisplayCoords(calibrationPoints[3])}
+                  <!-- Baseline -->
+                  <line x1={p0.x} y1={p0.y} x2={p1.x} y2={p1.y} stroke="#22c55e" stroke-width="2" opacity="0.7" />
+                  <!-- FT line -->
+                  <line x1={p2.x} y1={p2.y} x2={p3.x} y2={p3.y} stroke="#d946ef" stroke-width="2" opacity="0.7" />
+                  <!-- Sides -->
+                  <line x1={p0.x} y1={p0.y} x2={p2.x} y2={p2.y} stroke="#22c55e" stroke-width="2" opacity="0.7" />
+                  <line x1={p1.x} y1={p1.y} x2={p3.x} y2={p3.y} stroke="#22c55e" stroke-width="2" opacity="0.7" />
+                {:else}
+                  <!-- 6-point mode: baseline points 0-3, FT line points 4-5 -->
+                  {@const p1 = toDisplayCoords(calibrationPoints[1])}
+                  {@const p2 = toDisplayCoords(calibrationPoints[2])}
+                  {@const p4 = toDisplayCoords(calibrationPoints[4])}
+                  {@const p5 = toDisplayCoords(calibrationPoints[5])}
+                  <!-- FT line (points 4-5) -->
+                  <line x1={p4.x} y1={p4.y} x2={p5.x} y2={p5.y} stroke="#d946ef" stroke-width="2" opacity="0.7" />
+                  <!-- Penalty box sides -->
+                  <line x1={p1.x} y1={p1.y} x2={p4.x} y2={p4.y} stroke="#22c55e" stroke-width="2" opacity="0.7" />
+                  <line x1={p2.x} y1={p2.y} x2={p5.x} y2={p5.y} stroke="#22c55e" stroke-width="2" opacity="0.7" />
+                {/if}
               {/if}
 
               <!-- Point markers -->
@@ -455,19 +573,19 @@
             </svg>
 
             <!-- Calibration instructions + action buttons -->
-            <div class="absolute top-4 left-1/2 -translate-x-1/2 bg-black/80 rounded-lg px-4 py-2 text-center pointer-events-auto flex flex-col items-center gap-2">
-              {#if calibrationPoints.length < 6}
-                <p class="text-sm font-medium text-white pointer-events-none">
-                  Click point {calibrationPoints.length + 1}/6: <span class="text-blue-400">{CALIBRATION_LABELS[calibrationPoints.length]}</span>
+            <div class="absolute top-4 left-1/2 -translate-x-1/2 bg-black/80 rounded-lg px-4 py-2 text-center pointer-events-none flex flex-col items-center gap-2">
+              {#if calibrationPoints.length < expectedCalibrationPoints}
+                <p class="text-sm font-medium text-white">
+                  Click point {calibrationPoints.length + 1}/{expectedCalibrationPoints}: <span class="text-blue-400">{CALIBRATION_LABELS[calibrationPoints.length]}</span>
                 </p>
               {:else}
-                <p class="text-sm font-medium text-green-400 pointer-events-none">All 6 points placed. Confirm or reset.</p>
+                <p class="text-sm font-medium text-green-400">All {expectedCalibrationPoints} points placed. Confirm or reset.</p>
               {/if}
-              <div class="flex gap-3">
+              <div class="flex gap-3 pointer-events-auto">
               <Button onclick={(e: MouseEvent) => { e.stopPropagation(); resetCalibration(); }} variant="secondary" size="sm">
                 <RotateCcw class="w-4 h-4 mr-1" /> Reset
               </Button>
-              {#if calibrationPoints.length === 6}
+              {#if calibrationPoints.length === expectedCalibrationPoints}
                 <Button onclick={(e: MouseEvent) => { e.stopPropagation(); confirmCalibration(); }} size="sm" class="bg-green-600 hover:bg-green-700">
                   <Check class="w-4 h-4 mr-1" /> Confirm Calibration
                 </Button>

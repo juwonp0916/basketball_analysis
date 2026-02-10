@@ -548,52 +548,86 @@ class StaticShotLocalizer:
             cv2.putText(img_display, f"({foot_x}, {foot_y})", (foot_x + 20, foot_y + 20),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 1)
 
-        # Right panel: Court diagram
-        court_img = cv2.imread(self.court_img_path)
-        if court_img is None:
-            print(f"WARNING: Could not load court image: {self.court_img_path}")
-            return img_display
-
-        court_height, court_width = court_img.shape[:2]
-
-        # Draw shot location on court
+        # Right panel: Court diagram using SVG-based renderer
         if self.court_position:
             court_x, court_y = self.court_position
 
-            # Convert court coordinates (meters) to image pixel coordinates
-            # Court: X ∈ [0, 15]m (left to right), Y ∈ [0, 14]m (baseline to half-court)
-            # Image: (0,0) at top-left (baseline-left), baseline at top
+            # Use the new SVG-based court renderer
+            sys.path.insert(0, 'backend/score_detection')
+            from court_renderer import CourtRenderer
+            import matplotlib.pyplot as plt
+            import tempfile
 
-            # X: Scale [0, 15]m to image width
-            from constants import COURT_WIDTH, COURT_HALF_LENGTH
-            img_x = int(court_x / COURT_WIDTH * court_width)
+            # Create a temporary shot chart with just this shot
+            shot = (court_x, court_y, True)  # Assume made for visualization
 
-            # Y: Map [0, 14]m to image height (0 at top = baseline, height at bottom = half-court)
-            img_y = int(court_y / COURT_HALF_LENGTH * court_height)
-
-            # Draw marker
-            cv2.circle(court_img, (img_x, img_y), 20, (255, 255, 255), -1)
-            cv2.circle(court_img, (img_x, img_y), 15, (0, 255, 0), -1)
-            cv2.circle(court_img, (img_x, img_y), 20, (255, 255, 255), 3)
-
-        # Add text info
-        info_text = []
-        if self.shooter_position:
-            info_text.append(f"Video: ({self.shooter_position[0]:.0f}, {self.shooter_position[1]:.0f})")
-        if self.court_position:
-            info_text.append(f"Court: ({self.court_position[0]:.1f}, {self.court_position[1]:.1f})")
-        if self.zone:
+            # Generate statistics text
             stats = TeamStatistics(quarters=[float('inf')])
-            is_three = stats.determine_is_three_pt(self.zone)
-            info_text.append(f"Zone: {self.zone} ({'3PT' if is_three else '2PT'})")
+            info_lines = []
+            if self.shooter_position:
+                info_lines.append(f"Video: ({self.shooter_position[0]:.0f}, {self.shooter_position[1]:.0f})")
+            if self.court_position:
+                info_lines.append(f"Court: ({self.court_position[0]:.1f}, {self.court_position[1]:.1f})")
+            if self.zone:
+                is_three = stats.determine_is_three_pt(self.zone)
+                info_lines.append(f"Zone: {self.zone} ({'3PT' if is_three else '2PT'})")
 
-        y_offset = 40
-        for text in info_text:
-            cv2.putText(court_img, text, (10, y_offset),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 3)
-            cv2.putText(court_img, text, (10, y_offset),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 0), 2)
-            y_offset += 40
+            title = " | ".join(info_lines) if info_lines else "Shot Location"
+
+            # Create court visualization using SVG renderer
+            fig, ax = plt.subplots(figsize=(10, 9.4))
+            CourtRenderer.draw_court(ax)
+            CourtRenderer.plot_shot(ax, court_x, court_y, is_made=True, shot_number=None)
+            ax.set_title(title, fontsize=12, color='white', pad=20)
+            fig.tight_layout()
+
+            # Save to temporary file
+            with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+                temp_path = tmp.name
+                fig.savefig(temp_path, dpi=150, facecolor='#1f2937')
+            plt.close(fig)
+
+            # Load the generated court image
+            court_img = cv2.imread(temp_path)
+
+            # Clean up temp file
+            import os
+            try:
+                os.unlink(temp_path)
+            except:
+                pass
+
+            if court_img is None:
+                print(f"WARNING: Could not generate court visualization")
+                return img_display
+        else:
+            # No shot location - just draw empty court
+            sys.path.insert(0, 'backend/score_detection')
+            from court_renderer import CourtRenderer
+            import matplotlib.pyplot as plt
+            import tempfile
+
+            fig, ax = plt.subplots(figsize=(10, 9.4))
+            CourtRenderer.draw_court(ax)
+            ax.set_title("No shot detected", fontsize=12, color='white', pad=20)
+            fig.tight_layout()
+
+            with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+                temp_path = tmp.name
+                fig.savefig(temp_path, dpi=150, facecolor='#1f2937')
+            plt.close(fig)
+
+            court_img = cv2.imread(temp_path)
+
+            import os
+            try:
+                os.unlink(temp_path)
+            except:
+                pass
+
+            if court_img is None:
+                print(f"WARNING: Could not generate court visualization")
+                return img_display
 
         # Resize to match heights
         if img_display.shape[0] != court_img.shape[0]:
