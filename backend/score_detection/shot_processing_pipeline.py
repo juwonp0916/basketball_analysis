@@ -293,10 +293,10 @@ class ShotProcessingPipeline:
 
         # Convert court meters → frontend chart coordinates
         # X: [0, 15]m → [0, 50] (left to right)
-        coord_x = court_x / 15.0 * 50.0
+        coord_x = (court_x / 15.0 * 50.0)
         # Y: [0, 14]m → [47, 0] (baseline at top, half-court at bottom)
         # Flip Y-axis: baseline (Y=0) should map to top of chart
-        coord_y = (14.0 - court_y) / 14.0 * 47.0
+        coord_y = ((14.0 - court_y) / 14.0 * 47.0)
 
         shot_type_literal = "3pt" if shot_event.shot_type == '3pt' else "2pt"
         result_literal = "made" if shot_event.is_made else "missed"
