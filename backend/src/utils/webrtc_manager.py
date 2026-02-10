@@ -290,21 +290,29 @@ class ConnectionManager:
     def set_calibration(
         self,
         points: List[List[float]],
-        dimensions: Tuple[int, int]
+        dimensions: Tuple[int, int],
+        mode: str = "6-point"
     ) -> bool:
         """
-        Set 6-point court calibration.
+        Set court calibration (4-point or 6-point).
 
         Args:
-            points: List of 6 calibration points [[x1,y1], [x2,y2], ...]
+            points: List of 4 or 6 calibration points [[x1,y1], [x2,y2], ...]
             dimensions: (width, height) of the calibration frame
+            mode: "4-point" (paint box only) or "6-point" (full baseline)
 
         Returns:
             True if calibration was successful
         """
-        # Validate points
-        if len(points) != 6:
-            logger.error(f"Expected 6 calibration points, got {len(points)}")
+        # Validate mode
+        if mode not in ["4-point", "6-point"]:
+            logger.error(f"Invalid calibration mode '{mode}'")
+            return False
+
+        # Validate point count based on mode
+        expected_points = 4 if mode == "4-point" else 6
+        if len(points) != expected_points:
+            logger.error(f"{mode} calibration requires {expected_points} points, got {len(points)}")
             return False
 
         for i, point in enumerate(points):
@@ -314,13 +322,14 @@ class ConnectionManager:
 
         self.calibration_points = points
         self.calibration_dimensions = dimensions
+        self.calibration_mode = mode
         self._is_calibrated = True
 
         # Update pipeline if running
         if self.shot_pipeline:
-            self.shot_pipeline.set_calibration(points, dimensions)
+            self.shot_pipeline.set_calibration(points, dimensions, mode)
 
-        logger.info(f"Calibration set: {len(points)} points, dimensions {dimensions}")
+        logger.info(f"Calibration set: {mode} ({len(points)} points), dimensions {dimensions}")
         return True
 
     def get_calibration(self) -> Dict[str, Any]:

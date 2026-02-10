@@ -44,6 +44,22 @@ CALIBRATION_LABELS = [
     "Free Throw Line Right",
 ]
 
+# 4-Point Calibration System (Paint Box Only)
+# Use when full baseline sidelines are not visible
+CALIBRATION_POINTS_FIBA_PAINT = [
+    (4.6, 0.0),    # 1. Baseline Left Penalty Box
+    (10.4, 0.0),   # 2. Baseline Right Penalty Box
+    (4.6, 5.8),    # 3. Free Throw Line Left
+    (10.4, 5.8),   # 4. Free Throw Line Right
+]
+
+CALIBRATION_LABELS_PAINT = [
+    "Baseline Left Penalty Box",
+    "Baseline Right Penalty Box",
+    "Free Throw Line Left",
+    "Free Throw Line Right",
+]
+
 # Zone system (for shot statistics)
 # Keep existing zone definitions but update coordinates if needed
 WING_ZONE_Y = 4.0  # Approximate wing zone depth in meters

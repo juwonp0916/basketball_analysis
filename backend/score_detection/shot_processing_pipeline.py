@@ -118,22 +118,24 @@ class ShotProcessingPipeline:
     def set_calibration(
         self,
         points: List[List[float]],
-        dimensions: Tuple[int, int]
+        dimensions: Tuple[int, int],
+        mode: str = "6-point"
     ) -> bool:
         """
         Update calibration (for live calibration).
 
         Args:
-            points: 6 calibration points
+            points: 4 or 6 calibration points
             dimensions: (width, height) of calibration frame
+            mode: "4-point" or "6-point"
 
         Returns:
             True if calibration was successful
         """
-        success = self.detector.set_calibration(points, dimensions)
+        success = self.detector.set_calibration(points, dimensions, mode)
         if success:
             self.frame_width, self.frame_height = dimensions
-            logger.info(f"Calibration updated: {len(points)} points, {dimensions}")
+            logger.info(f"Calibration updated: {mode} ({len(points)} points), {dimensions}")
         return success
 
     def set_team_colors(self, team0_color: str, team1_color: str) -> bool:

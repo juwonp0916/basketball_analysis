@@ -57,10 +57,11 @@ WebRTCMessage = Union[FrameSyncPayload, ShotPayload]
 
 # Calibration schemas
 class CalibrationRequest(BaseModel):
-    """Request schema for setting 6-point court calibration"""
-    points: List[List[float]]  # 6 points [[x1,y1], [x2,y2], ...]
+    """Request schema for setting court calibration (4-point or 6-point)"""
+    points: List[List[float]]  # 4 or 6 points [[x1,y1], [x2,y2], ...]
     image_width: int
     image_height: int
+    mode: str = "6-point"  # "4-point" or "6-point"
 
 
 class CalibrationResponse(BaseModel):

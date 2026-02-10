@@ -68,6 +68,9 @@ class DetectorState:
     last_frame: Any = None  # Most recent frame for fallback person detection
     frame_history: List = field(default_factory=list)  # Rolling buffer of (det_frame, sequence_id, timestamp_ms)
 
+    # Temporal shot detection buffers
+    recent_shoot_detections: List = field(default_factory=list)  # [(frame_num, confidence), ...] for multi-frame voting
+
 
 class StreamingShotDetector:
     """
@@ -109,9 +112,9 @@ class StreamingShotDetector:
         self.frame_rate = frame_rate
 
         # Inference dimensions (rounded to multiples of 32)
-        # Use 30% resolution for maximum CPU performance
-        self.inference_width = ((int(frame_width * 0.3) + 31) // 32) * 32
-        self.inference_height = ((int(frame_height * 0.3) + 31) // 32) * 32
+        # Use 50% resolution for better detection (was 30% - too aggressive)
+        self.inference_width = ((int(frame_width * 0.5) + 31) // 32) * 32
+        self.inference_height = ((int(frame_height * 0.5) + 31) // 32) * 32
 
         # Timing constants (based on frame rate) - reduced to avoid blocking legitimate shots
         self.MISS_ATTEMPT_COOLDOWN = int(frame_rate * 1.5)  # Reduced from 2.5s to 1.5s
@@ -128,8 +131,18 @@ class StreamingShotDetector:
         self.DEDUPLICATION_POSITION_THRESHOLD = DEDUPLICATION_POSITION_THRESHOLD
         self.DEDUPLICATION_SAFETY_COOLDOWN = int(frame_rate * DEDUPLICATION_SAFETY_COOLDOWN_SEC)
 
+        # Temporal shot detection parameters (Option 1: Multi-frame voting)
+        self.SHOOT_TEMPORAL_WINDOW = 15  # frames (~0.5s at 30fps)
+        self.MIN_SHOOT_DETECTIONS = 3    # Need 3+ shoot detections in window to trigger
+
+        # Temporal trajectory validation parameters (Option 2: Ball trajectory)
+        self.TRAJECTORY_WINDOW = 10      # frames to analyze for trajectory
+        self.MIN_UPWARD_RATIO = 0.6      # 60% of frames must show upward motion
+        self.UPWARD_VELOCITY_THRESHOLD = -2  # pixels/frame (negative = upward in image coords)
+
         # Shot localization
         self.calibration_points = calibration_points
+        self.calibration_mode = "6-point"  # Default mode
         self.shot_localizer = None
         self._setup_localization()
 
@@ -156,7 +169,8 @@ class StreamingShotDetector:
                 calibration_points=self.calibration_points,
                 image_dimensions=(self.width, self.height),
                 court_img_path=court_img_path,
-                enable_visualization=False  # Disable file-based visualization for streaming
+                enable_visualization=False,  # Disable file-based visualization for streaming
+                calibration_mode=getattr(self, 'calibration_mode', '6-point')
             )
         except Exception as e:
             print(f"[StreamingShotDetector] Failed to initialize localizer: {e}")
@@ -165,23 +179,26 @@ class StreamingShotDetector:
     def set_calibration(
         self,
         points: List[List[float]],
-        dimensions: Tuple[int, int]
+        dimensions: Tuple[int, int],
+        mode: str = "6-point"
     ) -> bool:
         """
         Update calibration for live calibration support.
 
         Args:
-            points: List of 6 calibration points [[x1,y1], ...]
+            points: List of 4 or 6 calibration points [[x1,y1], ...]
             dimensions: (width, height) of the calibration frame
+            mode: "4-point" (paint box only) or "6-point" (full baseline)
 
         Returns:
             True if calibration was successful
         """
         self.calibration_points = points
+        self.calibration_mode = mode
         self.width, self.height = dimensions
-        # Use 30% resolution for maximum CPU performance
-        self.inference_width = ((int(self.width * 0.3) + 31) // 32) * 32
-        self.inference_height = ((int(self.height * 0.3) + 31) // 32) * 32
+        # Use 50% resolution for better detection (was 30% - too aggressive)
+        self.inference_width = ((int(self.width * 0.5) + 31) // 32) * 32
+        self.inference_height = ((int(self.height * 0.5) + 31) // 32) * 32
 
         try:
             self._setup_localization()
@@ -340,29 +357,61 @@ class StreamingShotDetector:
                 cls = int(box[2])
                 current_class = self.class_names_shoot[cls]
 
-                if current_class == 'shoot' and conf > 0.15 and not shoot_detected:  # Lowered to 0.15 to catch more shooting motions
-                    shoot_detected = True
+                if current_class == 'shoot' and conf > 0.15 and not shoot_detected:
+                    # Option 1: Multi-frame voting
+                    # Add this detection to the temporal buffer
+                    self.state.recent_shoot_detections.append((sequence_id, conf))
 
-                    # Scale shoot box
-                    x1_shoot = int(box[0][0] * self.width / self.inference_width)
-                    y1_shoot = int(box[0][1] * self.height / self.inference_height)
-                    x2_shoot = int(box[0][2] * self.width / self.inference_width)
-                    y2_shoot = int(box[0][3] * self.height / self.inference_height)
+                    # Clean old detections outside the temporal window
+                    self.state.recent_shoot_detections = [
+                        (frame, c) for (frame, c) in self.state.recent_shoot_detections
+                        if sequence_id - frame <= self.SHOOT_TEMPORAL_WINDOW
+                    ]
 
-                    shooter_position = self._find_shooter_position(
-                        boxes_shoot,
-                        (x1_shoot, y1_shoot, x2_shoot, y2_shoot)
-                    )
+                    # Check if we have enough shoot detections in the window
+                    num_detections = len(self.state.recent_shoot_detections)
 
-                    shot_data = {
-                        'frame': sequence_id,
-                        'timestamp': timestamp_ms,
-                        'shoot_confidence': conf,
-                        'shooter_position': shooter_position
-                    }
-                    self.state.shoot_pos.append(shot_data)
-                    self.state.pending_shot_group.append(shot_data)
-                    self.state.last_shot_detection_frame = sequence_id
+                    logger.debug(f"[Temporal] Shoot detected: conf={conf:.2f}, "
+                               f"window detections={num_detections}/{self.MIN_SHOOT_DETECTIONS}")
+
+                    # Only trigger if threshold met (multi-frame voting)
+                    if num_detections >= self.MIN_SHOOT_DETECTIONS:
+                        # Option 2: Validate ball trajectory before confirming
+                        trajectory_valid = self._validate_ball_trajectory(sequence_id)
+
+                        if trajectory_valid:
+                            shoot_detected = True
+                            logger.info(f"[Temporal] SHOT CONFIRMED: {num_detections} shoot detections + valid trajectory")
+
+                            # Scale shoot box
+                            x1_shoot = int(box[0][0] * self.width / self.inference_width)
+                            y1_shoot = int(box[0][1] * self.height / self.inference_height)
+                            x2_shoot = int(box[0][2] * self.width / self.inference_width)
+                            y2_shoot = int(box[0][3] * self.height / self.inference_height)
+
+                            shooter_position = self._find_shooter_position(
+                                boxes_shoot,
+                                (x1_shoot, y1_shoot, x2_shoot, y2_shoot)
+                            )
+
+                            shot_data = {
+                                'frame': sequence_id,
+                                'timestamp': timestamp_ms,
+                                'shoot_confidence': conf,
+                                'shooter_position': shooter_position,
+                                'temporal_detections': num_detections  # Track how many frames voted
+                            }
+                            self.state.shoot_pos.append(shot_data)
+                            self.state.pending_shot_group.append(shot_data)
+                            self.state.last_shot_detection_frame = sequence_id
+
+                            # Clear buffer after successful detection to avoid duplicates
+                            self.state.recent_shoot_detections = []
+                        else:
+                            logger.info(f"[Temporal] Shot rejected: {num_detections} detections but invalid trajectory")
+                    else:
+                        logger.debug(f"[Temporal] Accumulating: {num_detections}/{self.MIN_SHOOT_DETECTIONS} detections")
+
                     break
 
         return shoot_detected
@@ -519,6 +568,67 @@ class StreamingShotDetector:
             except Exception:
                 continue
         return None
+
+    def _validate_ball_trajectory(self, sequence_id: int) -> bool:
+        """
+        Option 2: Validate that ball has upward trajectory characteristic of a shot.
+
+        Returns True if the ball is moving upward in recent frames, indicating
+        a shot release. This provides physical validation to reduce false positives.
+
+        Args:
+            sequence_id: Current frame number
+
+        Returns:
+            bool: True if ball trajectory matches a shot pattern
+        """
+        # Need at least 5 ball detections for trajectory analysis
+        if len(self.state.ball_pos) < 5:
+            logger.debug(f"[Trajectory] Insufficient ball detections: {len(self.state.ball_pos)} < 5")
+            return False
+
+        # Get recent ball positions within trajectory window
+        recent_balls = [
+            (pos, frame, conf) for (pos, frame, w, h, conf) in self.state.ball_pos
+            if sequence_id - frame <= self.TRAJECTORY_WINDOW
+        ]
+
+        if len(recent_balls) < 5:
+            logger.debug(f"[Trajectory] Insufficient recent balls: {len(recent_balls)} < 5")
+            return False
+
+        # Sort by frame number
+        recent_balls.sort(key=lambda x: x[1])
+
+        # Calculate vertical velocities (dy between consecutive frames)
+        # In image coordinates: y increases downward, so negative dy = upward motion
+        velocities = []
+        for i in range(1, len(recent_balls)):
+            pos_prev = recent_balls[i-1][0]
+            pos_curr = recent_balls[i][0]
+            frame_prev = recent_balls[i-1][1]
+            frame_curr = recent_balls[i][1]
+
+            # Calculate dy (positive = downward, negative = upward)
+            dy = pos_curr[1] - pos_prev[1]
+
+            # Normalize by frame gap (in case frames are skipped)
+            frame_gap = max(1, frame_curr - frame_prev)
+            velocity = dy / frame_gap
+
+            velocities.append(velocity)
+
+        # Count frames with upward motion (velocity < threshold)
+        upward_count = sum(1 for v in velocities if v < self.UPWARD_VELOCITY_THRESHOLD)
+        upward_ratio = upward_count / len(velocities) if velocities else 0
+
+        # Ball should be moving upward in at least MIN_UPWARD_RATIO of frames
+        is_valid = upward_ratio >= self.MIN_UPWARD_RATIO
+
+        logger.info(f"[Trajectory] Frames: {len(recent_balls)}, Upward: {upward_count}/{len(velocities)} "
+                   f"({upward_ratio:.1%}), Threshold: {self.MIN_UPWARD_RATIO:.1%}, Valid: {is_valid}")
+
+        return is_valid
 
     def _clean_motion(self, sequence_id: int) -> None:
         """Clean detection history to remove stale/erroneous points"""

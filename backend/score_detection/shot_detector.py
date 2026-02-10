@@ -61,13 +61,15 @@ class ShotDetector:
                 on_complete,            # on_complete(team_id) -> Callback to MatchHandler for when video finishes processing
                 show_vid=False,         # Show CV2 window while processing, for debugging, will significantly slow down program
                 video_id=None,          # 1 or 2
-                calibration_points=None, # List of 6 (x,y) calibration points for shot localization
+                calibration_points=None, # List of 4 or 6 (x,y) calibration points for shot localization
                 enable_localization=False, # Enable shot localization with homography
+                calibration_mode='6-point', # '4-point' (paint box) or '6-point' (full baseline)
                 **kwargs):
         
         #TODO: initialize with team_id, updated based on switch timestamp
         self.video_path = video_path
         self.calibration_points = calibration_points
+        self.calibration_mode = calibration_mode
         self.model = YOLO(env['weights_path'], verbose=False)
         self.model_shoot = YOLO(env['weights_path_shoot'], verbose=False)
         self.class_names = env['classes']
@@ -137,9 +139,10 @@ class ShotDetector:
                 calibration_points=calibration_points,
                 image_dimensions=(self.width, self.height),
                 court_img_path=court_img_path,
-                enable_visualization=True
+                enable_visualization=True,
+                calibration_mode=self.calibration_mode
             )
-            logger.log(INFO, "✓ Shot localization enabled with 6-point calibration")
+            logger.log(INFO, f"✓ Shot localization enabled with {self.calibration_mode} calibration")
 
         self.makes = 0
         self.attempts = 0

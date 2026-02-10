@@ -23,52 +23,62 @@ logger = Logger([
 
 
 class ShotLocalizer:
-    def __init__(self, calibration_points, image_dimensions, court_img_path='court_img.png', enable_visualization=False):
+    def __init__(self, calibration_points, image_dimensions, court_img_path='court_img.png', enable_visualization=False, calibration_mode='6-point'):
         """
-        Initialize localizer with 6 calibration points
+        Initialize localizer with 4 or 6 calibration points
 
         Args:
-            calibration_points: List of 6 points [(x,y), ...] in video coordinates
+            calibration_points: List of 4 or 6 points [(x,y), ...] in video coordinates
             image_dimensions: Image dimensions as (width, height)
             court_img_path: Path to court diagram image for visualization
             enable_visualization: Whether to enable shot visualization
+            calibration_mode: "4-point" (paint box) or "6-point" (full baseline)
         """
-        self.calibration_points = self._parse_points(calibration_points)
+        self.calibration_mode = calibration_mode
+        self.calibration_points = self._parse_points(calibration_points, calibration_mode)
         self.image_width, self.image_height = self._parse_dimensions(image_dimensions)
 
-        # FIBA court 6-point reference (in meters)
-        from constants import CALIBRATION_POINTS_FIBA
-        self.court_calibration_points = np.array(CALIBRATION_POINTS_FIBA, dtype=float)
+        # FIBA court reference points (in meters)
+        from constants import CALIBRATION_POINTS_FIBA, CALIBRATION_POINTS_FIBA_PAINT
+        if calibration_mode == '4-point':
+            self.court_calibration_points = np.array(CALIBRATION_POINTS_FIBA_PAINT, dtype=float)
+        else:
+            self.court_calibration_points = np.array(CALIBRATION_POINTS_FIBA, dtype=float)
 
         # Calculate the homography matrix when initialized
         self.shot_data = []
         self.homography_matrix = self._calculate_homography()
 
-        # Visualization setup
+        # Visualization setup (now uses SVG-based renderer instead of PNG)
         self.enable_visualization = enable_visualization
+        # Legacy attributes kept for backward compatibility but not used
         self.court_img_path = court_img_path
         self.court_img = None
         self.court_img_width = None
         self.court_img_height = None
-        self.shot_markers = []  # Store all shot locations for cumulative display
+        self.shot_markers = []  # Deprecated - using shot_data instead
 
+        # No need to load court image - using SVG renderer now
         if self.enable_visualization:
-            self._load_court_image()
+            logger.log(INFO, "Shot visualization enabled (SVG-based renderer)")
     
-    def _parse_points(self, points_input):
+    def _parse_points(self, points_input, calibration_mode='6-point'):
         """Parse calibration points into numpy array"""
+        expected_points = 4 if calibration_mode == '4-point' else 6
+
         if isinstance(points_input, str):
-            # Format: "x1,y1,x2,y2,...,x6,y6"
+            # Format: "x1,y1,x2,y2,..."
             coords = list(map(float, points_input.split(',')))
-            if len(coords) != 12:
-                raise ValueError(f"Expected 12 coordinates (6 points), got {len(coords)}")
+            expected_coords = expected_points * 2
+            if len(coords) != expected_coords:
+                raise ValueError(f"Expected {expected_coords} coordinates ({expected_points} points), got {len(coords)}")
             return np.array([
-                [coords[i], coords[i+1]] for i in range(0, 12, 2)
+                [coords[i], coords[i+1]] for i in range(0, len(coords), 2)
             ], dtype=float)
         elif isinstance(points_input, list):
             points_array = np.array(points_input, dtype=np.float32)
-            if points_array.shape[0] != 6 or points_array.shape[1] != 2:
-                raise ValueError(f"Expected 6 points with (x,y), got shape {points_array.shape}")
+            if points_array.shape[0] != expected_points or points_array.shape[1] != 2:
+                raise ValueError(f"Expected {expected_points} points with (x,y), got shape {points_array.shape}")
             return points_array
         else:
             raise ValueError("Invalid format for calibration points")
@@ -86,14 +96,18 @@ class ShotLocalizer:
     
     def _calculate_homography(self):
         """
-        Calculate homography matrix from 6 video points to 6 court points
+        Calculate homography matrix from video points to court points
 
-        Uses cv2.findHomography with RANSAC for robustness (6 points = overdetermined system)
+        Supports both 4-point (paint box) and 6-point (full baseline) calibration.
+        Uses cv2.findHomography with RANSAC for robustness.
         """
-        if self.calibration_points.shape[0] != 6:
-            raise ValueError(f"Need exactly 6 calibration points, got {self.calibration_points.shape[0]}")
+        expected_points = 4 if self.calibration_mode == '4-point' else 6
+        if self.calibration_points.shape[0] != expected_points:
+            raise ValueError(f"Need exactly {expected_points} calibration points for {self.calibration_mode} mode, got {self.calibration_points.shape[0]}")
 
-        # findHomography expects at least 4 points; 6 provides better constraints
+        # findHomography works with both 4 and 6 points
+        # 4 points = minimum for homography (exactly determined)
+        # 6 points = overdetermined (better constraints, more robust)
         H, status = cv2.findHomography(
             self.calibration_points,
             self.court_calibration_points,
@@ -226,18 +240,21 @@ class ShotLocalizer:
 
     def visualize_shot(self, court_location, is_made=True, timestamp=None, save_path='shot_visualizations'):
         """
-        Visualize a shot on the court diagram
+        Visualize a shot on the court diagram (deprecated - shots are now stored in shot_data)
+
+        This method is kept for backward compatibility but no longer generates individual
+        shot images. Use get_shot_chart() to generate the final shot chart with all shots.
 
         Args:
             court_location: (x, y) coordinates in court space
             is_made: Whether the shot was made (green) or missed (red)
             timestamp: Optional timestamp string for labeling
-            save_path: Directory to save visualization images
+            save_path: Directory to save visualization images (not used)
 
         Returns:
-            Path to saved visualization image, or None if visualization is disabled
+            None (no longer generates individual shot images)
         """
-        if not self.enable_visualization or self.court_img is None:
+        if not self.enable_visualization:
             return None
 
         court_x, court_y = court_location
@@ -245,87 +262,15 @@ class ShotLocalizer:
             logger.log(INFO, "Cannot visualize shot: Invalid court location")
             return None
 
-        # Convert to image coordinates
-        img_x, img_y = self._court_to_image_coords(court_x, court_y)
-        if img_x is None or img_y is None:
-            return None
+        # Shots are now stored in shot_data during detection
+        # Individual shot visualization is deprecated - use get_shot_chart() instead
+        logger.log(INFO, f"Shot logged at ({court_x:.2f}m, {court_y:.2f}m) - {'Made' if is_made else 'Missed'}")
 
-        # Store shot marker for cumulative visualization
-        self.shot_markers.append({
-            'position': (img_x, img_y),
-            'is_made': is_made,
-            'timestamp': timestamp
-        })
-
-        # Create a fresh copy of the court image
-        court_display = self.court_img.copy()
-
-        # Draw all shot markers with smaller dots and labels
-        for idx, marker in enumerate(self.shot_markers):
-            pos = marker['position']
-            made = marker['is_made']
-            shot_num = idx + 1
-
-            # Color: Green for made shots, Red for misses
-            color = (0, 255, 0) if made else (0, 0, 255)
-
-            # Draw smaller dots (radius 5 instead of 8)
-            cv2.circle(court_display, pos, 5, (255, 255, 255), -1)  # White border
-            cv2.circle(court_display, pos, 4, color, -1)            # Colored center
-
-            # Add shot number label (every 5th shot or if it's the latest)
-            if shot_num % 5 == 0 or shot_num == len(self.shot_markers):
-                label = f"{shot_num}"
-                label_pos = (pos[0] + 8, pos[1] - 8)
-                cv2.putText(court_display, label, label_pos,
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 2)
-                cv2.putText(court_display, label, label_pos,
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 0, 0), 1)
-
-        # Highlight the most recent shot (slightly larger)
-        latest_pos = self.shot_markers[-1]['position']
-        latest_made = self.shot_markers[-1]['is_made']
-        latest_color = (0, 255, 0) if latest_made else (0, 0, 255)
-
-        # Draw larger marker for latest shot
-        cv2.circle(court_display, latest_pos, 8, (255, 255, 255), 2)   # Outer ring
-        cv2.circle(court_display, latest_pos, 6, latest_color, -1)     # Filled center
-
-        # Add text label
-        label = f"{'MADE' if latest_made else 'MISS'}"
-        if timestamp:
-            label += f" @ {timestamp}"
-
-        # Position text above the shot marker
-        text_pos = (latest_pos[0] - 40, latest_pos[1] - 20)
-        cv2.putText(court_display, label, text_pos, cv2.FONT_HERSHEY_SIMPLEX,
-                   0.5, (255, 255, 255), 2)
-        cv2.putText(court_display, label, text_pos, cv2.FONT_HERSHEY_SIMPLEX,
-                   0.5, latest_color, 1)
-
-        # Add shot count
-        made_count = sum(1 for m in self.shot_markers if m['is_made'])
-        total_count = len(self.shot_markers)
-        stats_text = f"Shots: {made_count}/{total_count}"
-        cv2.putText(court_display, stats_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX,
-                   0.7, (255, 255, 255), 2)
-        cv2.putText(court_display, stats_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX,
-                   0.7, (0, 0, 0), 1)
-
-        # Save visualization
-        Path(save_path).mkdir(parents=True, exist_ok=True)
-        timestamp_str = timestamp.replace(':', '-') if timestamp else datetime.now().strftime('%H-%M-%S')
-        output_filename = f"shot_{total_count:03d}_{timestamp_str}.png"
-        output_path = os.path.join(save_path, output_filename)
-
-        cv2.imwrite(output_path, court_display)
-        logger.log(INFO, f"Shot visualization saved to: {output_path}")
-
-        return output_path
+        return None
 
     def get_shot_chart(self, save_path='shot_chart.png'):
         """
-        Generate a final shot chart with all shots
+        Generate a final shot chart with all shots using SVG-based renderer
 
         Args:
             save_path: Path to save the final shot chart
@@ -333,60 +278,42 @@ class ShotLocalizer:
         Returns:
             Path to saved shot chart image
         """
-        if not self.enable_visualization or self.court_img is None:
+        if not self.enable_visualization:
             return None
 
-        if not self.shot_markers:
+        if not self.shot_data:
             logger.log(INFO, "No shots to visualize")
             return None
 
-        # Create a fresh copy of the court image
-        court_display = self.court_img.copy()
+        # Use the new SVG-based court renderer
+        from court_renderer import CourtRenderer
 
-        # Draw all shot markers
-        made_shots = []
-        missed_shots = []
+        # Extract shot data: (x_m, y_m, is_made)
+        shots = [
+            (shot['court_position_meters']['x'],
+             shot['court_position_meters']['y'],
+             shot['is_made'])
+            for shot in self.shot_data
+            if shot.get('court_position_meters')
+        ]
 
-        for marker in self.shot_markers:
-            if marker['is_made']:
-                made_shots.append(marker['position'])
-            else:
-                missed_shots.append(marker['position'])
+        if not shots:
+            logger.log(INFO, "No valid shots with court coordinates")
+            return None
 
-        # Draw missed shots (red) with smaller dots
-        for pos in missed_shots:
-            cv2.circle(court_display, pos, 5, (255, 255, 255), -1)
-            cv2.circle(court_display, pos, 4, (0, 0, 255), -1)
+        # Generate statistics for title
+        made_count = sum(1 for _, _, is_made in shots if is_made)
+        total_count = len(shots)
+        pct = (made_count / total_count * 100) if total_count > 0 else 0
+        title = f"Shot Chart: {made_count}/{total_count} ({pct:.1f}%)"
 
-        # Draw made shots (green) with smaller dots
-        for pos in made_shots:
-            cv2.circle(court_display, pos, 5, (255, 255, 255), -1)
-            cv2.circle(court_display, pos, 4, (0, 255, 0), -1)
+        # Create shot chart using SVG renderer
+        CourtRenderer.create_shot_chart(
+            shots=shots,
+            title=title,
+            save_path=save_path,
+            show_stats=True
+        )
 
-        # Add statistics
-        made_count = len(made_shots)
-        total_count = len(self.shot_markers)
-        percentage = (made_count / total_count * 100) if total_count > 0 else 0
-
-        stats_text = f"Shot Chart: {made_count}/{total_count} ({percentage:.1f}%)"
-        cv2.putText(court_display, stats_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX,
-                   0.8, (255, 255, 255), 3)
-        cv2.putText(court_display, stats_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX,
-                   0.8, (0, 0, 0), 2)
-
-        # Add legend
-        legend_y = 60
-        cv2.circle(court_display, (20, legend_y), 6, (0, 255, 0), -1)
-        cv2.putText(court_display, f"Made: {made_count}", (35, legend_y + 5),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-
-        legend_y += 25
-        cv2.circle(court_display, (20, legend_y), 6, (0, 0, 255), -1)
-        cv2.putText(court_display, f"Missed: {total_count - made_count}", (35, legend_y + 5),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-
-        # Save shot chart
-        cv2.imwrite(save_path, court_display)
         logger.log(INFO, f"Final shot chart saved to: {save_path}")
-
         return save_path

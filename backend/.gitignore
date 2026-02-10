@@ -28,5 +28,7 @@ dist/
 *.log
 tmp/
 
-# Large files
-backend/video1.mp4
+score_detection/SVG_UNIFICATION_CHANGES.md
+score_detection/TEMPORAL_SHOT_DETECTION.md
+score_detection/test_svg_renderer.pyc
+

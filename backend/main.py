@@ -73,22 +73,38 @@ async def offer(offer: Offer) -> Dict[str, str]:
 @app.post("/calibration", response_model=CalibrationResponse)
 async def set_calibration(request: CalibrationRequest) -> CalibrationResponse:
     """
-    Set 6-point court calibration for shot localization.
+    Set court calibration for shot localization.
 
-    The 6 points should be in clockwise order:
-    1. Baseline Left Sideline
-    2. Baseline Left Penalty Box
-    3. Baseline Right Penalty Box
-    4. Baseline Right Sideline
-    5. Free Throw Line Left
-    6. Free Throw Line Right
+    Supports two modes:
+    - "4-point": Paint box only (4 corners of penalty box)
+      1. Baseline Left Penalty Box
+      2. Baseline Right Penalty Box
+      3. Free Throw Line Left
+      4. Free Throw Line Right
+
+    - "6-point": Full baseline (all 6 points)
+      1. Baseline Left Sideline
+      2. Baseline Left Penalty Box
+      3. Baseline Right Penalty Box
+      4. Baseline Right Sideline
+      5. Free Throw Line Left
+      6. Free Throw Line Right
     """
-    # Validate point count
-    if len(request.points) != 6:
+    # Validate mode
+    if request.mode not in ["4-point", "6-point"]:
         return CalibrationResponse(
             success=False,
             is_calibrated=manager.is_calibrated,
-            error=f"Expected 6 calibration points, got {len(request.points)}"
+            error=f"Invalid calibration mode '{request.mode}'. Must be '4-point' or '6-point'"
+        )
+
+    # Validate point count based on mode
+    expected_points = 4 if request.mode == "4-point" else 6
+    if len(request.points) != expected_points:
+        return CalibrationResponse(
+            success=False,
+            is_calibrated=manager.is_calibrated,
+            error=f"{request.mode} calibration requires {expected_points} points, got {len(request.points)}"
         )
 
     # Validate each point has 2 coordinates
@@ -100,10 +116,11 @@ async def set_calibration(request: CalibrationRequest) -> CalibrationResponse:
                 error=f"Point {i+1} must have 2 coordinates (x, y)"
             )
 
-    # Set calibration
+    # Set calibration with mode
     success = manager.set_calibration(
         points=request.points,
-        dimensions=(request.image_width, request.image_height)
+        dimensions=(request.image_width, request.image_height),
+        mode=request.mode
     )
 
     return CalibrationResponse(
