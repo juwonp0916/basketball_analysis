@@ -145,7 +145,7 @@
     simulationMode = true;
 
     videoElement.crossOrigin = "anonymous";
-    videoElement.src = `${BACKEND_URL}/video/video5.mp4`;
+    videoElement.src = `${BACKEND_URL}/video/video9.mp4`;
 
     await new Promise<void>((resolve) => {
       videoElement!.addEventListener("canplay", () => resolve(), { once: true });
@@ -675,7 +675,7 @@
       </div>
 
       <!-- Shot Chart -->
-      <Card.Root class="bg-[#1a1d24] border-gray-800 flex flex-col h-[500px]">
+      <Card.Root class="bg-[#1a1d24] border-gray-800 flex flex-col h-[800px]">
         <Card.Header class="pb-2">
           <div class="flex bg-[#0f1116] rounded-lg p-1 w-full">
             <button class="flex-1 py-1 text-sm font-medium rounded bg-[#1a1d24] text-white shadow">All</button>
@@ -686,7 +686,7 @@
         </Card.Header>
         <Card.Content class="flex-1 relative p-4 min-h-0">
           <div class="w-full h-full relative" bind:clientWidth={containerWidth} bind:clientHeight={containerHeight}>
-            <Chart data={shotPoints} x="x" y="y" xDomain={[0, 150]} yDomain={[140, 0]} padding={chartPadding}>
+            <Chart data={shotPoints} x="x" y="y" xDomain={[0, 50]} yDomain={[47, 0]} padding={chartPadding}>
               <Svg>
                 <svg width={innerWidth} height={innerHeight} viewBox="0 0 50 47" preserveAspectRatio="none" style="overflow: visible;">
                   <g class="court-lines" stroke="#374151" stroke-width="0.5" fill="none">
