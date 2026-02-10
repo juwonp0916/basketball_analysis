@@ -547,13 +547,13 @@
         {/if}
 
         <!-- Video Overlay Controls -->
-        <div class="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/80 to-transparent flex justify-between items-center">
-          <span class="text-sm font-mono">1:02:14</span>
-          <div class="w-full mx-4 h-1 bg-gray-600 rounded-full overflow-hidden">
-            <div class="w-2/3 h-full bg-white"></div>
-          </div>
-          <span class="text-sm font-mono">1:45:30</span>
-        </div>
+        <!-- <div class="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/80 to-transparent flex justify-between items-center"> -->
+        <!--   <span class="text-sm font-mono">1:02:14</span> -->
+        <!--   <div class="w-full mx-4 h-1 bg-gray-600 rounded-full overflow-hidden"> -->
+        <!--     <div class="w-2/3 h-full bg-white"></div> -->
+        <!--   </div> -->
+        <!--   <span class="text-sm font-mono">1:45:30</span> -->
+        <!-- </div> -->
       </div>
 
       <!-- Recording Controls -->
