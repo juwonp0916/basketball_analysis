@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
-  import { createPeerConnection, sendOffer } from "$lib/webrtc_utils";
+  import { createPeerConnection, sendOffer } from "$lib/utils/webrtc-utils";
   import Button from "$lib/components/ui/button/button.svelte";
   import * as Card from "$lib/components/ui/card/index.js";
   import { Settings, Circle, Square, Check, X, Play, Pause, Video, RotateCcw, Crosshair } from "lucide-svelte";
@@ -20,7 +20,7 @@
   const BACKEND_URL = "http://127.0.0.1:8000";
   let simulationMode = $state(false);
   let calibrationMode = $state(false);
-  let calibrationModeSelection = $state(false);  // Show mode selector
+  let calibrationModeSelection = $state(false); // Show mode selector
   let selectedCalibrationMode = $state<"4-point" | "6-point">("4-point");
   let calibrationPoints = $state<{ x: number; y: number }[]>([]);
   let isCalibrated = $state(false);
@@ -67,13 +67,9 @@
     "Free Throw Line Right",
   ];
 
-  const CALIBRATION_LABELS = $derived(
-    selectedCalibrationMode === "4-point" ? CALIBRATION_LABELS_4PT : CALIBRATION_LABELS_6PT
-  );
+  const CALIBRATION_LABELS = $derived(selectedCalibrationMode === "4-point" ? CALIBRATION_LABELS_4PT : CALIBRATION_LABELS_6PT);
 
-  const expectedCalibrationPoints = $derived(
-    selectedCalibrationMode === "4-point" ? 4 : 6
-  );
+  const expectedCalibrationPoints = $derived(selectedCalibrationMode === "4-point" ? 4 : 6);
 
   const CALIBRATION_COLORS_6PT = [
     "#eab308", // yellow - sideline
@@ -91,25 +87,7 @@
     "#d946ef", // magenta - FT line
   ];
 
-  const CALIBRATION_COLORS = $derived(
-    selectedCalibrationMode === "4-point" ? CALIBRATION_COLORS_4PT : CALIBRATION_COLORS_6PT
-  );
-
-  type FrameSyncPayload = {
-    type: "frame_sync";
-    sequence_id: number;
-    video_timestamp_ms: number;
-    current_stats: GameStats;
-  };
-
-  type ShotDetectedPayload = {
-    type: "shot_event";
-    video_timestamp_ms: number;
-    event_data: Shot;
-    updated_stats: GameStats;
-  };
-
-  type WebRTCMessage = FrameSyncPayload | ShotDetectedPayload;
+  const CALIBRATION_COLORS = $derived(selectedCalibrationMode === "4-point" ? CALIBRATION_COLORS_4PT : CALIBRATION_COLORS_6PT);
 
   let logs = $state<Shot[]>([]);
   let shots = $state<Shot[]>([]);
@@ -200,12 +178,12 @@
     console.log(`[Calibration Click] Current: ${calibrationPoints.length}/${expectedCalibrationPoints}`);
 
     if (!videoElement) {
-      console.error('[Calibration Click] No video element');
+      console.error("[Calibration Click] No video element");
       return;
     }
 
     if (calibrationPoints.length >= expectedCalibrationPoints) {
-      console.log('[Calibration Click] Already at max points, ignoring');
+      console.log("[Calibration Click] Already at max points, ignoring");
       return;
     }
 

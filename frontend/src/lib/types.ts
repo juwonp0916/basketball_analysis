@@ -27,3 +27,20 @@ export interface Shot {
   location: string;
   coord: Point;
 }
+
+
+export type FrameSyncPayload = {
+  type: "frame_sync";
+  sequence_id: number;
+  video_timestamp_ms: number;
+  current_stats: GameStats;
+};
+
+export type ShotDetectedPayload = {
+  type: "shot_event";
+  video_timestamp_ms: number;
+  event_data: Shot;
+  updated_stats: GameStats;
+};
+
+export type WebRTCMessage = FrameSyncPayload | ShotDetectedPayload;
