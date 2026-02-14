@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from src.utils.webrtc_manager import ConnectionManager
 from schema import CalibrationRequest, CalibrationResponse, DetectionStatusResponse, TeamColorsRequest, TeamColorsResponse
 
-VIDEO_DIR = Path(__file__).parent / "score_detection"
+VIDEO_DIR = Path(__file__).parent / "sample_videos"
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("backend")
