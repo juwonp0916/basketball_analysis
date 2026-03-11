@@ -25,6 +25,8 @@
   let teamSetupMode = $state(false);
   let team0Color = $state("red");
   let team1Color = $state("blue");
+  let team0Name = $state("Team 1");
+  let team1Name = $state("Team 2");
   let teamsConfigured = $state(false);
 
   // --- Analysis state ---
@@ -67,7 +69,7 @@
     if (!videoElement) return;
     simulationMode = true;
     videoElement.crossOrigin = "anonymous";
-    videoElement.src = `${BACKEND_URL}/video/video9.mp4`;
+    videoElement.src = `${BACKEND_URL}/video/video6.mp4`;
     await new Promise<void>((r) => videoElement!.addEventListener("canplay", () => r(), { once: true }));
     videoElement.playbackRate = 0.5;
     await videoElement.play();
@@ -229,7 +231,14 @@
         {/if}
 
         {#if teamSetupMode}
-          <TeamSetupOverlay bind:team0Color bind:team1Color onconfirm={confirmTeamColors} onskip={skipTeamSetup} />
+          <TeamSetupOverlay
+            bind:team0Color
+            bind:team1Color
+            bind:team0Name
+            bind:team1Name
+            onconfirm={confirmTeamColors}
+            onskip={skipTeamSetup}
+          />
         {/if}
       </div>
 

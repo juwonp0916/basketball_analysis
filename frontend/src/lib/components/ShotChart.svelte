@@ -7,9 +7,10 @@
   type Props = {
     shotPoints: ShotPoint[];
     selectedShotId: number | null;
+    hideHeader?: boolean;
   };
 
-  let { shotPoints, selectedShotId }: Props = $props();
+  let { shotPoints, selectedShotId, hideHeader = false }: Props = $props();
 
   const chartPadding = { top: 20, bottom: 20, left: 20, right: 20 };
   let containerWidth = $state(0);
@@ -18,17 +19,19 @@
   let innerHeight = $derived(Math.max(0, containerHeight - chartPadding.top - chartPadding.bottom));
 </script>
 
-<Card.Root class="bg-[#1a1d24] border-gray-800 flex flex-col h-[600px]">
-  <Card.Header class="pb-2">
-    <div class="flex bg-[#0f1116] rounded-lg p-1 w-full">
-      <button class="flex-1 py-1 text-sm font-medium rounded bg-[#1a1d24] text-white shadow">All</button>
-      <button class="flex-1 py-1 text-sm font-medium text-gray-400 hover:text-white">Made</button>
-      <button class="flex-1 py-1 text-sm font-medium text-gray-400 hover:text-white">Missed</button>
-      <button class="flex-1 py-1 text-sm font-medium text-gray-400 hover:text-white">3PT</button>
-      <button class="flex-1 py-1 text-sm font-medium text-gray-400 hover:text-white">2PT</button>
-    </div>
-  </Card.Header>
-  <Card.Content class="flex-1 relative p-4 min-h-0">
+<Card.Root class="bg-[#1a1d24] border-gray-800 flex flex-col h-[600px] {hideHeader ? 'h-full border-0 bg-transparent shadow-none' : ''}">
+  {#if !hideHeader}
+    <Card.Header class="pb-2">
+      <div class="flex bg-[#0f1116] rounded-lg p-1 w-full">
+        <button class="flex-1 py-1 text-sm font-medium rounded bg-[#1a1d24] text-white shadow">All</button>
+        <button class="flex-1 py-1 text-sm font-medium text-gray-400 hover:text-white">Made</button>
+        <button class="flex-1 py-1 text-sm font-medium text-gray-400 hover:text-white">Missed</button>
+        <button class="flex-1 py-1 text-sm font-medium text-gray-400 hover:text-white">3PT</button>
+        <button class="flex-1 py-1 text-sm font-medium text-gray-400 hover:text-white">2PT</button>
+      </div>
+    </Card.Header>
+  {/if}
+  <Card.Content class="flex-1 relative {hideHeader ? 'p-0' : 'p-4'} min-h-0">
     <div class="w-full h-full relative" bind:clientWidth={containerWidth} bind:clientHeight={containerHeight}>
       <Chart data={shotPoints} x="x" y="y" xDomain={[0, 50]} yDomain={[47, 0]} padding={chartPadding}>
         <Svg>

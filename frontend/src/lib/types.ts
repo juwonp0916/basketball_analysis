@@ -26,6 +26,7 @@ export interface Shot {
   result: "made" | "missed";
   location: string;
   coord: Point;
+  team?: string;
 }
 
 
