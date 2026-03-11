@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Dict, List, Any, Union, Optional
 import logging
 
+
 class IOUtils:
     """Utility class for file I/O operations"""
 
@@ -98,6 +99,7 @@ class IOUtils:
         else:
             raise ValueError(f"Unsupported annotation format: {annotation_path.suffix}")
 
+
 class VideoReader:
     """Video reading utility with frame extraction"""
 
@@ -125,7 +127,7 @@ class VideoReader:
         return frame if ret else None
 
     def read_frames(self, start_idx: int = 0, end_idx: Optional[int] = None,
-                   step: int = 1) -> List[np.ndarray]:
+                    step: int = 1) -> List[np.ndarray]:
         """Read multiple frames"""
         if end_idx is None:
             end_idx = self.metadata['frame_count']
@@ -139,8 +141,8 @@ class VideoReader:
         return frames
 
     def extract_frames(self, output_dir: Union[str, Path],
-                      start_idx: int = 0, end_idx: Optional[int] = None,
-                      step: int = 1, format: str = 'jpg') -> List[str]:
+                       start_idx: int = 0, end_idx: Optional[int] = None,
+                       step: int = 1, format: str = 'jpg') -> List[str]:
         """Extract frames to directory"""
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -162,6 +164,7 @@ class VideoReader:
         """Release video capture"""
         if self.cap is not None:
             self.cap.release()
+
 
 class DatasetManager:
     """Dataset management utility"""
