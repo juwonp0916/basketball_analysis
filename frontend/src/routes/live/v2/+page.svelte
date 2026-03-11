@@ -173,7 +173,7 @@
     simulationMode = true;
 
     videoElement.crossOrigin = "anonymous";
-    videoElement.src = `${BACKEND_URL}/video/video9.mp4`;
+    videoElement.src = `${BACKEND_URL}/video/video1.mp4`;
 
     await new Promise<void>((resolve) => {
       videoElement!.addEventListener("canplay", () => resolve(), { once: true });
@@ -531,9 +531,9 @@
             <div
               class="absolute top-4 left-1/2 -translate-x-1/2 bg-black/80 rounded-lg px-4 py-2 text-center pointer-events-auto flex flex-col items-center gap-2"
             >
-              {#if calibrationPoints.length < 6}
+              {#if calibrationPoints.length < expectedCalibrationPoints}
                 <p class="text-sm font-medium text-white pointer-events-none">
-                  Click point {calibrationPoints.length + 1}/6:
+                  Click point {calibrationPoints.length + 1}/{expectedCalibrationPoints}:
                   <span class="text-blue-400">{CALIBRATION_LABELS[calibrationPoints.length]}</span>
                 </p>
               {:else}
@@ -550,7 +550,7 @@
                 >
                   <RotateCcw class="w-4 h-4 mr-1" /> Reset
                 </Button>
-                {#if calibrationPoints.length === 6}
+                {#if calibrationPoints.length === expectedCalibrationPoints}
                   <Button
                     onclick={(e: MouseEvent) => {
                       e.stopPropagation();
@@ -562,6 +562,24 @@
                     <Check class="w-4 h-4 mr-1" /> Confirm Calibration
                   </Button>
                 {/if}
+              </div>
+            </div>
+          </div>
+        {/if}
+
+        <!-- Calibration Mode Selection Overlay -->
+        {#if calibrationModeSelection}
+          <div class="absolute inset-0 bg-black/70 flex items-center justify-center">
+            <div class="bg-[#1a1d24] rounded-xl p-6 max-w-sm w-full mx-4 border border-gray-700">
+              <h3 class="text-xl font-bold text-white mb-2 text-center">Select Calibration Mode</h3>
+              <p class="text-gray-400 text-sm mb-6 text-center">Choose how many court points you will mark.</p>
+              <div class="flex flex-col gap-3">
+                <Button onclick={() => startCalibrationWithMode("4-point")} class="w-full bg-blue-600 hover:bg-blue-700">
+                  4-Point Calibration
+                </Button>
+                <Button onclick={() => startCalibrationWithMode("6-point")} variant="secondary" class="w-full">
+                  6-Point Calibration
+                </Button>
               </div>
             </div>
           </div>

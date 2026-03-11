@@ -160,8 +160,8 @@ class StreamingTeamDetector:
         self,
         frame: np.ndarray,
         shooter_pos: dict,
-        model_shoot,
-        class_names_shoot: List[str],
+        model,
+        class_names: List[str],
         inference_dims: Tuple[int, int],
         frame_dims: Tuple[int, int],
         device: str = 'cpu'
@@ -172,8 +172,8 @@ class StreamingTeamDetector:
         Args:
             frame: BGR video frame
             shooter_pos: {'x': float, 'y': float} shooter position
-            model_shoot: YOLO model for person detection
-            class_names_shoot: Class names for the model
+            model: YOLO model for person detection
+            class_names: Class names for the model
             inference_dims: (width, height) for inference
             frame_dims: (width, height) of original frame
             device: Device for inference
@@ -189,7 +189,7 @@ class StreamingTeamDetector:
 
         det_frame = cv2.resize(frame, (inf_w, inf_h))
 
-        results = model_shoot(
+        results = model(
             det_frame,
             stream=True,
             verbose=False,
@@ -205,9 +205,9 @@ class StreamingTeamDetector:
         for r in results:
             for box in r.boxes:
                 cls = int(box.cls[0])
-                if cls >= len(class_names_shoot):
+                if cls >= len(class_names):
                     continue
-                class_name = class_names_shoot[cls]
+                class_name = class_names[cls]
 
                 if class_name != 'person':
                     continue

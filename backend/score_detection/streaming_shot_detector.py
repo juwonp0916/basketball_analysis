@@ -25,8 +25,6 @@ env = yaml.load(open(_config_path, 'r'), Loader=yaml.SafeLoader)
 # Resolve relative paths
 if not os.path.isabs(env['weights_path']):
     env['weights_path'] = os.path.join(_config_dir, env['weights_path'])
-if not os.path.isabs(env['weights_path_shoot']):
-    env['weights_path_shoot'] = os.path.join(_config_dir, env['weights_path_shoot'])
 
 
 @dataclass
@@ -99,12 +97,10 @@ class StreamingShotDetector:
             frame_height: Expected frame height in pixels
             frame_rate: Expected frame rate (for timing calculations)
         """
-        # Load YOLO models once
+        # Load YOLO model once
         self.model = YOLO(env['weights_path'], verbose=False)
-        self.model_shoot = YOLO(env['weights_path_shoot'], verbose=False)
 
         self.class_names = env['classes']
-        self.class_names_shoot = env['classes_shoot']
 
         # Frame dimensions
         self.width = frame_width
@@ -333,7 +329,7 @@ class StreamingShotDetector:
         sequence_id: int
     ) -> bool:
         """Detect shoot class and shooter position"""
-        results_shoot = self.model_shoot(
+        results_shoot = self.model(
             det_frame,
             stream=True,
             verbose=False,
@@ -355,7 +351,7 @@ class StreamingShotDetector:
             for box in boxes_shoot:
                 conf = float(box[1])
                 cls = int(box[2])
-                current_class = self.class_names_shoot[cls]
+                current_class = self.class_names[cls]
 
                 if current_class == 'shoot' and conf > 0.15 and not shoot_detected:
                     # Option 1: Multi-frame voting
@@ -430,7 +426,7 @@ class StreamingShotDetector:
 
         for box_data in boxes_shoot:
             cls = int(box_data[2])
-            class_name = self.class_names_shoot[cls]
+            class_name = self.class_names[cls]
 
             if class_name != 'person':
                 continue
@@ -542,7 +538,7 @@ class StreamingShotDetector:
         frames_to_check = self.state.frame_history[-5:]
         for det_frame, seq_id, ts in reversed(frames_to_check):
             try:
-                results_shoot = self.model_shoot(
+                results_shoot = self.model(
                     det_frame, stream=True, verbose=False,
                     imgsz=self.inference_width, device=self.device,
                     conf=0.1, max_det=15
@@ -555,7 +551,7 @@ class StreamingShotDetector:
                     for box in boxes_shoot:
                         conf = float(box[1])
                         cls = int(box[2])
-                        if self.class_names_shoot[cls] == 'shoot' and conf > 0.15:  # Lowered to match main detection threshold
+                        if self.class_names[cls] == 'shoot' and conf > 0.15:  # Lowered to match main detection threshold
                             x1 = int(box[0][0] * self.width / self.inference_width)
                             y1 = int(box[0][1] * self.height / self.inference_height)
                             x2 = int(box[0][2] * self.width / self.inference_width)
@@ -886,8 +882,8 @@ class StreamingShotDetector:
                 team_id, team_confidence, bbox = self.team_detector.classify_from_position(
                     frame=self.state.last_frame,
                     shooter_pos=shooter_pos,
-                    model_shoot=self.model_shoot,
-                    class_names_shoot=self.class_names_shoot,
+                    model=self.model,
+                    class_names=self.class_names,
                     inference_dims=(self.inference_width, self.inference_height),
                     frame_dims=(self.width, self.height),
                     device=self.device

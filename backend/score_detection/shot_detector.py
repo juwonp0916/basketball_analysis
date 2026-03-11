@@ -45,8 +45,6 @@ env = yaml.load(open(_config_path, 'r'), Loader=yaml.SafeLoader)
 # Resolve relative paths in config to be relative to config file location
 if not _os.path.isabs(env['weights_path']):
     env['weights_path'] = _os.path.join(_config_dir, env['weights_path'])
-if not _os.path.isabs(env['weights_path_shoot']):
-    env['weights_path_shoot'] = _os.path.join(_config_dir, env['weights_path_shoot'])
 
 print("Environment variables: ", env)
 
@@ -71,9 +69,7 @@ class ShotDetector:
         self.calibration_points = calibration_points
         self.calibration_mode = calibration_mode
         self.model = YOLO(env['weights_path'], verbose=False)
-        self.model_shoot = YOLO(env['weights_path_shoot'], verbose=False)
         self.class_names = env['classes']
-        self.class_names_shoot = env['classes_shoot']
         self.colors = [(0, 255, 0), (255, 255, 0), (255, 255, 255), (255, 0, 0), (0, 0, 255)]
         self.colors_shoot = [(0, 255, 0), (255, 255, 255), (255, 0, 0), (0, 0, 255)]
         self.on_detect = on_detect
@@ -358,7 +354,7 @@ class ShotDetector:
             # Run shoot detection model every 3 frames for performance
             self.shoot_detected = False
             if self.frame_count % 3 == 0:
-                results_shoot = self.model_shoot(det_frame, stream=True, verbose=False, imgsz=self.inference_width, device=env.get('device', 0))
+                results_shoot = self.model(det_frame, stream=True, verbose=False, imgsz=self.inference_width, device=env.get('device', 0))
 
                 for r in results_shoot:
                     boxes_shoot = sorted([(box.xyxy[0], box.conf, box.cls) for box in r.boxes], key=lambda x: -x[1])
@@ -366,7 +362,7 @@ class ShotDetector:
                     for box in boxes_shoot:
                         conf = float(box[1])
                         cls = int(box[2])
-                        current_class = self.class_names_shoot[cls]
+                        current_class = self.class_names[cls]
 
                         # Detect "shoot" class with lower confidence threshold
                         if current_class == 'shoot' and conf > 0.3 and not self.shoot_detected:
@@ -503,7 +499,7 @@ class ShotDetector:
         # Iterate through all boxes to find person boxes
         for box_data in boxes_shoot:
             cls = int(box_data[2])
-            class_name = self.class_names_shoot[cls]
+            class_name = self.class_names[cls]
 
             # Only consider person boxes
             if class_name != 'person':
@@ -1183,7 +1179,7 @@ class ShotDetector:
             shoot_box = None
             person_boxes = []
             # Apply shoot detection model
-            results = self.model_shoot(frame_det_img, stream=True, verbose=False, imgsz=self.inference_width, device=env.get('device', 0))
+            results = self.model(frame_det_img, stream=True, verbose=False, imgsz=self.inference_width, device=env.get('device', 0))
 
             for r in results:
                 boxes = sorted([(box.xyxy[0], box.conf, box.cls) for box in r.boxes], key=lambda x: -x[1])
@@ -1210,7 +1206,7 @@ class ShotDetector:
 
                     # Class Name
                     cls = int(box[2])
-                    current_class = self.class_names_shoot[cls]
+                    current_class = self.class_names[cls]
                     # Store box info based on class and confidence threshold
                     if conf > conf_thresholds[current_class]:
                         box_info = {
@@ -1291,7 +1287,7 @@ class ShotDetector:
                 person_boxes = []
 
                 # Run shoot detection model again to get ball and person boxes
-                results = self.model_shoot(frame_det_img, stream=True, verbose=False, imgsz=self.inference_width, device=env.get('device', 0))
+                results = self.model(frame_det_img, stream=True, verbose=False, imgsz=self.inference_width, device=env.get('device', 0))
 
                 for r in results:
                     boxes = sorted([(box.xyxy[0], box.conf, box.cls) for box in r.boxes], key=lambda x: -x[1])
@@ -1310,7 +1306,7 @@ class ShotDetector:
 
                         conf = math.ceil((box[1] * 100)) / 100
                         cls = int(box[2])
-                        current_class = self.class_names_shoot[cls]
+                        current_class = self.class_names[cls]
 
                         if conf > conf_thresholds[current_class]:
                             box_info = {

@@ -27,8 +27,13 @@ from pathlib import Path
 # Add backend path
 sys.path.insert(0, 'backend/score_detection')
 
+import importlib.util as _ilu
+_spec = _ilu.spec_from_file_location("team_statistics", "backend/score_detection/statistics.py")
+_mod = _ilu.module_from_spec(_spec)
+_spec.loader.exec_module(_mod)
+TeamStatistics = _mod.TeamStatistics
+
 from localization import ShotLocalizer
-from statistics import TeamStatistics
 from constants import MAP_WIDTH, MAP_HEIGHT
 
 class StaticShotLocalizer:
@@ -772,7 +777,7 @@ Examples:
 
     parser.add_argument('--image', required=True, help='Path to input image')
     parser.add_argument('--model',
-                       default='backend/score_detection/weights/03102025_best.pt',
+                       default='backend/score_detection/weights/new_weight.pt',
                        help='Path to YOLO model weights')
     parser.add_argument('--court-type',
                        default='half_court',
