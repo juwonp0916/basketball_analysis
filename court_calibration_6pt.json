@@ -1,0 +1,41 @@
+{
+  "points": [
+    [
+      420.0,
+      361.0
+    ],
+    [
+      611.0,
+      381.0
+    ],
+    [
+      891.0,
+      408.0
+    ],
+    [
+      1231.0,
+      446.0
+    ],
+    [
+      281.0,
+      428.0
+    ],
+    [
+      638.0,
+      507.0
+    ]
+  ],
+  "labels": [
+    "Baseline Left Sideline",
+    "Baseline Left Penalty Box",
+    "Baseline Right Penalty Box",
+    "Baseline Right Sideline",
+    "Free Throw Line Left",
+    "Free Throw Line Right"
+  ],
+  "image_dimensions": [
+    1242,
+    640
+  ],
+  "court_type": "FIBA_half_court_6pt"
+}

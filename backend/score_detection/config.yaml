@@ -1,0 +1,20 @@
+weights_path: "weights/new_weight.pt"
+
+classes: ["ball", "made", "person", "rim", "shoot"]
+
+input: r"C:\Users\stick\OneDrive\Documents\HKUST\FYP\basketball-analysis\backend\score_detection\video1.mp4"
+
+
+save_video: True
+output_path: "output"
+upload_path: "uploads"
+data_path: "data"
+report_path: "reports"
+resource_path: "resources"
+output_width: 1280
+output_height: 720
+iou_threshold: 0.4
+screenshot_path: "screenshots"
+screenshot: False
+flask_port: 5555
+device: "cpu"

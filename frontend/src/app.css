@@ -1,8 +1,8 @@
 @import "tailwindcss";
-
 @import "tw-animate-css";
 
 @custom-variant dark (&:is(.dark *));
+@source '../node_modules/layerchart/dist';
 
 :root {
   --radius: 0.625rem;
@@ -119,3 +119,4 @@
     @apply bg-background text-foreground;
   }
 }
+
