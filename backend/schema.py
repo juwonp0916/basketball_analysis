@@ -48,11 +48,17 @@ class ShotPayload(BaseModel):
     updated_stats: GameStats
 
 
+class TeamColorsPayload(BaseModel):
+    type: Literal["team_colors"] = "team_colors"
+    team0_color: str
+    team1_color: str
+
+
 # Alias for backward compatibility
 ShotDetectedPayload = ShotPayload
 
 # Union type for type hinting elsewhere
-WebRTCMessage = Union[FrameSyncPayload, ShotPayload]
+WebRTCMessage = Union[FrameSyncPayload, ShotPayload, TeamColorsPayload]
 
 
 # Calibration schemas

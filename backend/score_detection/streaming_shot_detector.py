@@ -202,18 +202,24 @@ class StreamingShotDetector:
         except Exception:
             return False
 
-    def set_team_colors(self, team0_color: str, team1_color: str) -> bool:
+    def auto_calibrate_teams(self, frame: np.ndarray) -> bool:
         """
-        Set team colors for jersey-based team detection.
-
-        Args:
-            team0_color: Color name for team 0 (e.g., 'red', 'blue')
-            team1_color: Color name for team 1
+        Automatically detect and calibrate the two main team colors in the frame.
 
         Returns:
-            True if colors were set successfully
+            True if calibration succeeded
         """
-        return self.team_detector.set_team_colors(team0_color, team1_color)
+        return self.team_detector.auto_calibrate(
+            frame,
+            self.model,
+            self.class_names,
+            (self.inference_width, self.inference_height),
+            self.device
+        )
+        
+    def get_team_colors_hex(self) -> Tuple[str, str]:
+        """Return the hex colors of the auto-calibrated teams."""
+        return self.team_detector.get_team_colors_hex()
 
     def process_frame(
         self,

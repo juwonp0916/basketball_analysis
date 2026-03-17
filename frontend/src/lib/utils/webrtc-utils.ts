@@ -8,6 +8,7 @@ export interface WebRTCAnswer {
 export type AnalysisCallbacks = {
   onStatsUpdate: (stats: GameStats) => void;
   onShotDetected: (shot: Shot) => void;
+  onTeamColorsCalibrated?: (team0Color: string, team1Color: string) => void;
 }
 
 export type AnalysisSessionOptions = {
@@ -46,6 +47,10 @@ export function createAnalysisSession(stream: MediaStream, callbacks: AnalysisCa
       } else if (msg.type === "shot_event") {
         callbacks.onStatsUpdate(msg.updated_stats)
         callbacks.onShotDetected(msg.event_data);
+      } else if (msg.type === "team_colors") {
+        if (callbacks.onTeamColorsCalibrated) {
+          callbacks.onTeamColorsCalibrated(msg.team0_color, msg.team1_color);
+        }
       }
     };
 

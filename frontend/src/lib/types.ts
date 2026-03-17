@@ -26,6 +26,8 @@ export interface Shot {
   result: "made" | "missed";
   location: string;
   coord: Point;
+  team_id?: number;
+  team_confidence?: number;
   team?: string;
 }
 
@@ -44,4 +46,10 @@ export type ShotDetectedPayload = {
   updated_stats: GameStats;
 };
 
-export type WebRTCMessage = FrameSyncPayload | ShotDetectedPayload;
+export type TeamColorsPayload = {
+  type: "team_colors";
+  team0_color: string;
+  team1_color: string;
+};
+
+export type WebRTCMessage = FrameSyncPayload | ShotDetectedPayload | TeamColorsPayload;

@@ -33,3 +33,6 @@ score_detection/TEMPORAL_SHOT_DETECTION.md
 score_detection/test_svg_renderer.pyc
 
 sample_videos/
+
+score_detection/test_auto_calib.py
+test_streaming_shot_detector.py

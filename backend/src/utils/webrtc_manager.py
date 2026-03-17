@@ -99,10 +99,6 @@ class ConnectionManager:
         self.calibration_dimensions: Optional[Tuple[int, int]] = None
         self._is_calibrated: bool = False
 
-        # Team colors
-        self._team0_color: Optional[str] = None
-        self._team1_color: Optional[str] = None
-
     async def handle_offer(self, params):
         offer = RTCSessionDescription(sdp=params["sdp"], type=params["type"])
         pc = RTCPeerConnection()
@@ -340,32 +336,6 @@ class ConnectionManager:
             "dimensions": self.calibration_dimensions
         }
 
-    def set_team_colors(self, team0_color: str, team1_color: str) -> bool:
-        """
-        Set team jersey colors for team-based shot tracking.
-
-        Args:
-            team0_color: Color name for team 0 (e.g., 'red', 'blue')
-            team1_color: Color name for team 1
-
-        Returns:
-            True if colors were set successfully
-        """
-        # Update pipeline if running
-        if self.shot_pipeline:
-            success = self.shot_pipeline.set_team_colors(team0_color, team1_color)
-            if success:
-                self._team0_color = team0_color
-                self._team1_color = team1_color
-                logger.info(f"Team colors set: team0={team0_color}, team1={team1_color}")
-            return success
-        else:
-            # Store for later when pipeline starts
-            self._team0_color = team0_color
-            self._team1_color = team1_color
-            logger.info(f"Team colors stored (pipeline not running): team0={team0_color}, team1={team1_color}")
-            return True
-
     async def start_shot_detection(self) -> bool:
         """
         Start real shot detection (requires calibration).
@@ -397,10 +367,6 @@ class ConnectionManager:
                 frame_width=self.calibration_dimensions[0] if self.calibration_dimensions else 1280,
                 frame_height=self.calibration_dimensions[1] if self.calibration_dimensions else 720
             )
-
-            # Apply team colors if previously set
-            if self._team0_color and self._team1_color:
-                self.shot_pipeline.set_team_colors(self._team0_color, self._team1_color)
 
             await self.shot_pipeline.start()
             logger.info("Shot detection started")

@@ -4,11 +4,9 @@
   import * as Card from "$lib/components/ui/card/index.js";
   import { Settings, Square, Check, X, Play, Video, Crosshair } from "lucide-svelte";
   import CalibrationOverlay from "$lib/components/CalibrationOverlay.svelte";
-  import TeamSetupOverlay from "$lib/components/TeamSetupOverlay.svelte";
   import ShotChart from "$lib/components/ShotChart.svelte";
   import { createAnalysisSession } from "$lib/utils/webrtc-utils";
   import { videoClickToCalibrationPoint, submitCalibration, type CalibrationPoint } from "$lib/services/calibration";
-  import { submitTeamColors } from "$lib/services/team-colors";
   import { BACKEND_URL } from "$lib";
   import { formatMs } from "$lib/utils/format";
   import type { Shot, GameStats } from "$lib/types";
@@ -22,9 +20,8 @@
   let calibrationMode = $state(false);
   let calibrationPoints = $state<CalibrationPoint[]>([]);
   let isCalibrated = $state(false);
-  let teamSetupMode = $state(false);
-  let team0Color = $state("red");
-  let team1Color = $state("blue");
+  let team0Color = $state("#ff0000");
+  let team1Color = $state("#0000ff");
   let team0Name = $state("Team 1");
   let team1Name = $state("Team 2");
   let teamsConfigured = $state(false);
@@ -140,38 +137,13 @@
       if (data.success) {
         isCalibrated = true;
         calibrationMode = false;
-        teamSetupMode = true;
+        startAnalysisWebrtc();
       } else {
         alert(`Calibration failed: ${data.error || "Unknown error"}`);
       }
     } catch {
       alert("Could not send calibration to server.");
     }
-  }
-
-  // --- Team colors handlers ---
-  async function confirmTeamColors() {
-    if (team0Color === team1Color || team0Name === team1Name) {
-      alert("Select different colors and names.");
-      return;
-    }
-    try {
-      const data = await submitTeamColors(team0Color, team1Color);
-      if (data.success) {
-        teamsConfigured = true;
-        teamSetupMode = false;
-        startAnalysisWebrtc();
-      } else {
-        alert(`Team setup failed: ${data.error}`);
-      }
-    } catch {
-      alert("Could not send team colors to server.");
-    }
-  }
-
-  function skipTeamSetup() {
-    teamSetupMode = false;
-    startAnalysisWebrtc();
   }
 
   // --- Analysis ---
@@ -182,8 +154,6 @@
     }
     if (!isCalibrated) {
       enterCalibrationMode();
-    } else if (!teamsConfigured) {
-      teamSetupMode = true;
     } else {
       startAnalysisWebrtc();
     }
@@ -197,14 +167,13 @@
         {
           onStatsUpdate: (s) => (globalStats = s),
           onShotDetected: (shot) => {
-            // Assign a simulated team to the shot here as a workaround since the server might not send it
-            // In a real scenario, this would be determined by computer vision layer
-            if (!shot.team && teamsConfigured) {
-              const r = Math.random();
-              shot.team = r > 0.5 ? team0Name : team1Name;
-            }
             logs = [shot, ...logs].slice(0, 50);
             shots = [...shots, shot].slice(-200);
+          },
+          onTeamColorsCalibrated: (team0: string, team1: string) => {
+            team0Color = team0;
+            team1Color = team1;
+            teamsConfigured = true;
           },
         },
         { backendUrl: BACKEND_URL, simulationMode, isCalibrated },
@@ -239,7 +208,6 @@
     calibrationMode = false;
     calibrationPoints = [];
     isCalibrated = false;
-    teamSetupMode = false;
     teamsConfigured = false;
   }
 
@@ -301,17 +269,6 @@
             onconfirm={confirmCalibration}
           />
         {/if}
-
-        {#if teamSetupMode}
-          <TeamSetupOverlay
-            bind:team0Color
-            bind:team1Color
-            bind:team0Name
-            bind:team1Name
-            onconfirm={confirmTeamColors}
-            onskip={skipTeamSetup}
-          />
-        {/if}
       </div>
 
       <!-- Recording Controls -->
@@ -325,10 +282,9 @@
               <h3 class="font-bold text-white">{simulationMode ? "Simulation Mode" : "Recording in Progress"}</h3>
               <p class="text-sm text-gray-400">
                 {#if simulationMode && !isCalibrated}Calibration required
-                {:else if simulationMode && teamSetupMode}Configure team colors
                 {:else if simulationMode && isCalibrated}Ready for analysis {teamsConfigured
                     ? `(Teams: ${team0Name} vs ${team1Name})`
-                    : "(No team tracking)"}
+                    : "(Auto-detecting teams...)"}
                 {:else}Duration: {recordingDuration}{/if}
               </p>
             </div>
