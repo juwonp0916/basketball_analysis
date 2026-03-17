@@ -1,6 +1,6 @@
 weights_path: "weights/new_weight.pt"
 
-classes: ["ball", "rim", "person", "shoot"]
+classes: ["ball", "made", "person", "rim", "shoot"]
 
 input: r"C:\Users\stick\OneDrive\Documents\HKUST\FYP\basketball-analysis\backend\score_detection\video1.mp4"
 
