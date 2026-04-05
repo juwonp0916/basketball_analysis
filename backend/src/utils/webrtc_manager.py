@@ -98,6 +98,7 @@ class ConnectionManager:
         self.calibration_points: Optional[List[List[float]]] = None
         self.calibration_dimensions: Optional[Tuple[int, int]] = None
         self._is_calibrated: bool = False
+        self._calibration_localizer: Optional[Any] = None  # ShotLocalizer for diagnostics
 
         # Team colors
         self._team0_color: Optional[str] = None
@@ -291,7 +292,7 @@ class ConnectionManager:
         self,
         points: List[List[float]],
         dimensions: Tuple[int, int],
-        mode: str = "6-point"
+        mode: str = "4-point"
     ) -> bool:
         """
         Set court calibration (4-point or 6-point).
@@ -305,12 +306,12 @@ class ConnectionManager:
             True if calibration was successful
         """
         # Validate mode
-        if mode not in ["4-point", "6-point"]:
+        if mode not in ["4-point", "4-point", "6-point", "6-point-3pt"]:
             logger.error(f"Invalid calibration mode '{mode}'")
             return False
 
         # Validate point count based on mode
-        expected_points = 4 if mode == "4-point" else 6
+        expected_points = 4 if mode in ("4-point", "4-point") else 6
         if len(points) != expected_points:
             logger.error(f"{mode} calibration requires {expected_points} points, got {len(points)}")
             return False
@@ -325,12 +326,45 @@ class ConnectionManager:
         self.calibration_mode = mode
         self._is_calibrated = True
 
+        # Create a localizer immediately so diagnostics work before detection starts
+        try:
+            from localization import ShotLocalizer
+            self._calibration_localizer = ShotLocalizer(
+                calibration_points=points,
+                image_dimensions=dimensions,
+                calibration_mode=mode
+            )
+        except Exception as e:
+            logger.warning(f"Could not create calibration localizer: {e}")
+            self._calibration_localizer = None
+
         # Update pipeline if running
         if self.shot_pipeline:
             self.shot_pipeline.set_calibration(points, dimensions, mode)
 
         logger.info(f"Calibration set: {mode} ({len(points)} points), dimensions {dimensions}")
         return True
+
+    def get_calibration_diagnostics(self) -> Dict[str, Any]:
+        """
+        Return per-point reprojection errors and court outline pixels for the current calibration.
+        Prefers the pipeline's localizer if detection is running; falls back to the
+        standalone localizer created at calibration time.
+        """
+        try:
+            localizer = None
+            if self.shot_pipeline and self.shot_pipeline.detector.shot_localizer:
+                localizer = self.shot_pipeline.detector.shot_localizer
+            elif self._calibration_localizer:
+                localizer = self._calibration_localizer
+
+            if localizer:
+                diag = localizer.get_calibration_diagnostics()
+                outline = localizer.get_court_outline_pixels()
+                return {'diagnostics': diag, 'court_outline_pixels': outline}
+        except Exception as e:
+            logger.warning(f"Could not get calibration diagnostics: {e}")
+        return {'diagnostics': None, 'court_outline_pixels': None}
 
     def get_calibration(self) -> Dict[str, Any]:
         """Get current calibration state"""
@@ -395,7 +429,8 @@ class ConnectionManager:
                 broadcaster=self.broadcast,
                 calibration_points=self.calibration_points,
                 frame_width=self.calibration_dimensions[0] if self.calibration_dimensions else 1280,
-                frame_height=self.calibration_dimensions[1] if self.calibration_dimensions else 720
+                frame_height=self.calibration_dimensions[1] if self.calibration_dimensions else 720,
+                calibration_mode=getattr(self, 'calibration_mode', '4-point')
             )
 
             # Apply team colors if previously set

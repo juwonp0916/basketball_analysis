@@ -37,12 +37,27 @@
         <Svg>
           <svg width={innerWidth} height={innerHeight} viewBox="0 0 50 47" preserveAspectRatio="none" style="overflow: visible;">
             <g class="court-lines" stroke="#374151" stroke-width="0.5" fill="none">
-              <rect x="0" y="0" width="50" height="47" vector-effect="non-scaling-stroke" />
-              <rect x="17" y="0" width="16" height="19" vector-effect="non-scaling-stroke" />
-              <circle cx="25" cy="19" r="6" vector-effect="non-scaling-stroke" />
-              <path d="M 3 0 L 3 14 Q 25 43 47 14 L 47 0" vector-effect="non-scaling-stroke" />
-              <circle cx="25" cy="5.25" r="0.75" stroke="#ef4444" vector-effect="non-scaling-stroke" />
-              <line x1="22" y1="4" x2="28" y2="4" vector-effect="non-scaling-stroke" />
+              <rect x="0" y="0" width="50" height="47" />
+
+              <!-- Hoop (moved up) -->
+              <circle cx="25" cy="3" r="0.75" stroke="#ef4444" />
+              <line x1="22" y1="1.5" x2="28" y2="1.5" />
+
+              <!-- Paint -->
+              <rect x="17" y="0" width="16" height="19" />
+
+              <!-- Free throw -->
+              <path d="M 31 19 A 6 6 0 0 1 19 19" />
+
+              <!-- Restricted -->
+              <path d="M 21 4 A 4 4 0 0 0 29 4" />
+
+              <!-- Corner 3 -->
+              <line x1="3" y1="0" x2="3" y2="10" />
+              <line x1="47" y1="0" x2="47" y2="10" />
+
+              <!-- FIXED 3PT ARC (now curves downward) -->
+              <path d="M 3 10 A 22.75 22.75 0 0 0 47 10" />
             </g>
           </svg>
 

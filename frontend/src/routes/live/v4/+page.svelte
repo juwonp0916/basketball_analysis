@@ -7,7 +7,7 @@
   import TeamSetupOverlay from "$lib/components/TeamSetupOverlay.svelte";
   import ShotChart from "$lib/components/ShotChart.svelte";
   import { createAnalysisSession } from "$lib/utils/webrtc-utils";
-  import { videoClickToCalibrationPoint, submitCalibration, type CalibrationPoint } from "$lib/services/calibration";
+  import { videoClickToCalibrationPoint, submitCalibration, type CalibrationPoint, type CalibrationResult, MAX_CALIBRATION_POINTS } from "$lib/services/calibration";
   import { submitTeamColors } from "$lib/services/team-colors";
   import { BACKEND_URL } from "$lib";
   import { formatMs } from "$lib/utils/format";
@@ -22,6 +22,8 @@
   let calibrationMode = $state(false);
   let calibrationPoints = $state<CalibrationPoint[]>([]);
   let isCalibrated = $state(false);
+  let calibrationResult = $state<CalibrationResult | null>(null);
+  let showCourtOverlay = $state(true);
   let teamSetupMode = $state(false);
   let team0Color = $state("red");
   let team1Color = $state("blue");
@@ -36,6 +38,7 @@
   let selectedShotId = $state<number | null>(null);
   let activeTab = $state<"all" | "team1" | "team2" | "comparison">("all");
   let eventLogFilter = $state<"all" | "team1" | "team2">("all");
+
 
   let globalStats = $state<GameStats>({
     totalShots: { made: 0, total: 0 },
@@ -119,7 +122,7 @@
     if (!videoElement) return;
     simulationMode = true;
     videoElement.crossOrigin = "anonymous";
-    videoElement.src = `${BACKEND_URL}/video/video6.mp4`;
+    videoElement.src = `${BACKEND_URL}/video/trial.mp4`;
     await new Promise<void>((r) => videoElement!.addEventListener("canplay", () => r(), { once: true }));
     videoElement.playbackRate = 0.5;
     await videoElement.play();
@@ -129,16 +132,18 @@
 
   // --- Calibration handlers ---
   function handleCalibrationClick(e: MouseEvent) {
-    if (!videoElement || calibrationPoints.length >= 6) return;
+    if (!videoElement || calibrationPoints.length >= MAX_CALIBRATION_POINTS) return;
     calibrationPoints = [...calibrationPoints, videoClickToCalibrationPoint(e, videoElement)];
   }
 
   async function confirmCalibration() {
-    if (!videoElement || calibrationPoints.length !== 6) return;
+    if (!videoElement || calibrationPoints.length !== MAX_CALIBRATION_POINTS) return;
     try {
-      const data = await submitCalibration(calibrationPoints, videoElement.videoWidth, videoElement.videoHeight);
+      const data = await submitCalibration(calibrationPoints, videoElement.videoWidth, videoElement.videoHeight, "4-point");
       if (data.success) {
+        calibrationResult = data;
         isCalibrated = true;
+        showCourtOverlay = true;
         calibrationMode = false;
         teamSetupMode = true;
       } else {
@@ -147,6 +152,21 @@
     } catch {
       alert("Could not send calibration to server.");
     }
+  }
+
+  // Convert a video-pixel coordinate to SVG display coordinate
+  function vidToDisplay(x: number, y: number): { x: number; y: number } {
+    if (!videoElement) return { x, y };
+    const scaleX = videoElement.clientWidth / videoElement.videoWidth;
+    const scaleY = videoElement.clientHeight / videoElement.videoHeight;
+    return { x: x * scaleX, y: y * scaleY };
+  }
+
+  // Max per-point error for color grading: green < 0.15m, yellow < 0.35m, red >= 0.35m
+  function errorColor(err: number): string {
+    if (err < 0.15) return "#22c55e";
+    if (err < 0.35) return "#eab308";
+    return "#ef4444";
   }
 
   // --- Team colors handlers ---
@@ -197,8 +217,6 @@
         {
           onStatsUpdate: (s) => (globalStats = s),
           onShotDetected: (shot) => {
-            // Assign a simulated team to the shot here as a workaround since the server might not send it
-            // In a real scenario, this would be determined by computer vision layer
             if (!shot.team && teamsConfigured) {
               const r = Math.random();
               shot.team = r > 0.5 ? team0Name : team1Name;
@@ -281,7 +299,10 @@
   <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
     <div class="lg:col-span-2 flex flex-col gap-6">
       <!-- Video Player -->
-      <div class="relative w-full aspect-video bg-black rounded-xl overflow-hidden border border-gray-800 shadow-2xl">
+      <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+      <div
+        class="relative w-full aspect-video bg-black rounded-xl overflow-hidden border border-gray-800 shadow-2xl"
+      >
         {#if !stream}
           <div class="absolute inset-0 flex flex-col items-center justify-center text-gray-500">
             <Video class="w-12 h-12 mb-4 opacity-50" />
@@ -302,6 +323,57 @@
           />
         {/if}
 
+        <!-- Court outline overlay shown after calibration to verify accuracy -->
+        {#if isCalibrated && showCourtOverlay && calibrationResult?.court_outline_pixels && videoElement}
+          <svg class="absolute inset-0 w-full h-full pointer-events-none">
+            <!-- Court lines projected back to video pixel space -->
+            {#each calibrationResult.court_outline_pixels as polyline}
+              {#if polyline.length >= 2}
+                <polyline
+                  points={polyline.map(([x, y]: [number, number]) => {
+                    const d = vidToDisplay(x, y);
+                    return `${d.x},${d.y}`;
+                  }).join(" ")}
+                  fill="none"
+                  stroke="#3b82f6"
+                  stroke-width="1.5"
+                  stroke-dasharray="6 3"
+                  opacity="0.75"
+                />
+              {/if}
+            {/each}
+
+            <!-- Calibration point dots with per-point error color coding -->
+            {#each calibrationPoints as pt, i}
+              {@const dp = vidToDisplay(pt.x, pt.y)}
+              {@const err = calibrationResult.point_errors?.[i]}
+              <circle cx={dp.x} cy={dp.y} r="6" fill={err != null ? errorColor(err) : "#94a3b8"} opacity="0.9" stroke="white" stroke-width="1.5" />
+              {#if err != null}
+                <text x={dp.x + 10} y={dp.y + 4} fill="white" font-size="10" font-weight="600" style="text-shadow: 0 1px 2px rgba(0,0,0,0.9);">
+                  {err < 0.01 ? "<1cm" : `${(err * 100).toFixed(0)}cm`}
+                </text>
+              {/if}
+            {/each}
+          </svg>
+
+          <!-- Toggle + quality badge -->
+          <div class="absolute bottom-3 left-3 flex items-center gap-2 pointer-events-auto">
+            <button
+              onclick={() => (showCourtOverlay = !showCourtOverlay)}
+              class="bg-black/70 text-white text-xs px-2 py-1 rounded border border-gray-600 hover:bg-black/90"
+            >
+              {showCourtOverlay ? "Hide" : "Show"} Court Overlay
+            </button>
+            {#if calibrationResult.avg_error != null}
+              {@const avg = calibrationResult.avg_error}
+              <span class="text-xs px-2 py-1 rounded font-medium"
+                style="background: rgba(0,0,0,0.7); color: {avg < 0.15 ? '#22c55e' : avg < 0.35 ? '#eab308' : '#ef4444'};">
+                Avg error: {(avg * 100).toFixed(0)}cm {avg < 0.15 ? "✓" : avg < 0.35 ? "⚠" : "✗ recalibrate"}
+              </span>
+            {/if}
+          </div>
+        {/if}
+
         {#if teamSetupMode}
           <TeamSetupOverlay
             bind:team0Color
@@ -312,6 +384,7 @@
             onskip={skipTeamSetup}
           />
         {/if}
+
       </div>
 
       <!-- Recording Controls -->

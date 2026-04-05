@@ -61,7 +61,7 @@ class CalibrationRequest(BaseModel):
     points: List[List[float]]  # 4 or 6 points [[x1,y1], [x2,y2], ...]
     image_width: int
     image_height: int
-    mode: str = "6-point"  # "4-point" or "6-point"
+    mode: str = "4-point"
 
 
 class CalibrationResponse(BaseModel):
@@ -70,6 +70,13 @@ class CalibrationResponse(BaseModel):
     is_calibrated: bool = False
     error: Optional[str] = None
     points: Optional[List[List[float]]] = None
+    # Per-point reprojection errors in meters (same order as input points)
+    point_errors: Optional[List[float]] = None
+    # Avg reprojection error in meters
+    avg_error: Optional[float] = None
+    # Court outline projected to pixel space for overlay rendering.
+    # List of polylines, each polyline is a list of [x, y] pixel coords.
+    court_outline_pixels: Optional[List[List[List[float]]]] = None
 
 
 class DetectionStatusResponse(BaseModel):

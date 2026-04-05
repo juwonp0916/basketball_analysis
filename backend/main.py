@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from src.utils.webrtc_manager import ConnectionManager
 from schema import CalibrationRequest, CalibrationResponse, DetectionStatusResponse, TeamColorsRequest, TeamColorsResponse
 
-VIDEO_DIR = Path(__file__).parent / "sample_videos"
+VIDEO_DIR = Path(__file__).parent / "score_detection"
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("backend")
@@ -49,6 +49,16 @@ async def health() -> Dict[str, Any]:
 @app.get("/debug/frame_stats")
 async def debug_frame_stats() -> Dict[str, Any]:
     return manager.frame_buffer.stats()
+
+
+@app.get("/debug/shot/{shot_id}")
+async def debug_shot_frame(shot_id: int):
+    """Serve the annotated debug frame for a specific shot (saved at detection time)."""
+    debug_dir = Path(__file__).parent.parent / "debug_shot_frames"
+    img_path = debug_dir / f"debug_shot_{shot_id:04d}.jpg"
+    if not img_path.is_file():
+        raise HTTPException(status_code=404, detail=f"Debug frame not found for shot {shot_id}")
+    return FileResponse(str(img_path), media_type="image/jpeg")
 
 
 @app.get("/video/{filename}")
@@ -91,15 +101,15 @@ async def set_calibration(request: CalibrationRequest) -> CalibrationResponse:
       6. Free Throw Line Right
     """
     # Validate mode
-    if request.mode not in ["4-point", "6-point"]:
+    if request.mode not in ["4-point", "4-point-court", "6-point", "6-point-3pt"]:
         return CalibrationResponse(
             success=False,
             is_calibrated=manager.is_calibrated,
-            error=f"Invalid calibration mode '{request.mode}'. Must be '4-point' or '6-point'"
+            error=f"Invalid calibration mode '{request.mode}'."
         )
 
     # Validate point count based on mode
-    expected_points = 4 if request.mode == "4-point" else 6
+    expected_points = 4 if request.mode in ("4-point", "4-point-court") else 6
     if len(request.points) != expected_points:
         return CalibrationResponse(
             success=False,
@@ -123,11 +133,24 @@ async def set_calibration(request: CalibrationRequest) -> CalibrationResponse:
         mode=request.mode
     )
 
+    if not success:
+        return CalibrationResponse(
+            success=False,
+            is_calibrated=manager.is_calibrated,
+            error="Failed to set calibration"
+        )
+
+    # Get diagnostics and court overlay for UI feedback
+    diag_data = manager.get_calibration_diagnostics()
+    diag = diag_data.get('diagnostics')
+
     return CalibrationResponse(
-        success=success,
+        success=True,
         is_calibrated=manager.is_calibrated,
-        points=request.points if success else None,
-        error=None if success else "Failed to set calibration"
+        points=request.points,
+        point_errors=diag['errors'] if diag else None,
+        avg_error=diag['avg_error'] if diag else None,
+        court_outline_pixels=diag_data.get('court_outline_pixels')
     )
 
 

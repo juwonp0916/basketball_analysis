@@ -7,7 +7,7 @@
   import TeamSetupOverlay from "$lib/components/TeamSetupOverlay.svelte";
   import ShotChart from "$lib/components/ShotChart.svelte";
   import { createAnalysisSession } from "$lib/utils/webrtc-utils";
-  import { videoClickToCalibrationPoint, submitCalibration, type CalibrationPoint } from "$lib/services/calibration";
+  import { videoClickToCalibrationPoint, submitCalibration, type CalibrationPoint, MAX_CALIBRATION_POINTS } from "$lib/services/calibration";
   import { submitTeamColors } from "$lib/services/team-colors";
   import { BACKEND_URL } from "$lib";
   import { formatMs } from "$lib/utils/format";
@@ -69,7 +69,7 @@
     if (!videoElement) return;
     simulationMode = true;
     videoElement.crossOrigin = "anonymous";
-    videoElement.src = `${BACKEND_URL}/video/video6.mp4`;
+    videoElement.src = `${BACKEND_URL}/video/shot.mp4`;
     await new Promise<void>((r) => videoElement!.addEventListener("canplay", () => r(), { once: true }));
     videoElement.playbackRate = 0.5;
     await videoElement.play();
@@ -80,14 +80,14 @@
 
   // --- Calibration handlers ---
   function handleCalibrationClick(e: MouseEvent) {
-    if (!videoElement || calibrationPoints.length >= 6) return;
+    if (!videoElement || calibrationPoints.length >= MAX_CALIBRATION_POINTS) return;
     calibrationPoints = [...calibrationPoints, videoClickToCalibrationPoint(e, videoElement)];
   }
 
   async function confirmCalibration() {
-    if (!videoElement || calibrationPoints.length !== 6) return;
+    if (!videoElement || calibrationPoints.length !== MAX_CALIBRATION_POINTS) return;
     try {
-      const data = await submitCalibration(calibrationPoints, videoElement.videoWidth, videoElement.videoHeight);
+      const data = await submitCalibration(calibrationPoints, videoElement.videoWidth, videoElement.videoHeight, "4-point");
       if (data.success) {
         isCalibrated = true;
         calibrationMode = false;

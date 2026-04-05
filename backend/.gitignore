@@ -31,5 +31,11 @@ tmp/
 score_detection/SVG_UNIFICATION_CHANGES.md
 score_detection/TEMPORAL_SHOT_DETECTION.md
 score_detection/test_svg_renderer.pyc
+score_detection/drill.mp4
+score_detection/shot.mp4
+score_detection/shots.mp4
+score_detection/video1.mp4
+score_detection/trial.mp4
+
 
 sample_videos/
