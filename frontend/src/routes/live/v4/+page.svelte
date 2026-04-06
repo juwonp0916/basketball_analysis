@@ -2,7 +2,7 @@
   import { onDestroy } from "svelte";
   import Button from "$lib/components/ui/button/button.svelte";
   import * as Card from "$lib/components/ui/card/index.js";
-  import { Settings, Square, Check, X, Play, Video, Crosshair } from "lucide-svelte";
+  import { Settings, Square, Check, X, Play, Video, Crosshair, Activity, List, Pause } from "lucide-svelte";
   import CalibrationOverlay from "$lib/components/CalibrationOverlay.svelte";
   import ShotChart from "$lib/components/ShotChart.svelte";
   import { createAnalysisSession } from "$lib/utils/webrtc-utils";
@@ -14,6 +14,8 @@
   // --- DOM refs ---
   let videoElement = $state<HTMLVideoElement | null>(null);
   let stream = $state<MediaStream | null>(null);
+  let playbackSpeed = $state<number>(1.0);
+  let isPaused = $state<boolean>(true);
 
   // --- Mode flags ---
   let simulationMode = $state<boolean>(false);
@@ -118,10 +120,29 @@
     videoElement.crossOrigin = "anonymous";
     videoElement.src = `${BACKEND_URL}/video/video6.mp4`;
     await new Promise<void>((r) => videoElement!.addEventListener("canplay", () => r(), { once: true }));
-    videoElement.playbackRate = 0.5;
+    videoElement.playbackRate = playbackSpeed;
+    isPaused = true;
     await videoElement.play();
     stream = (videoElement as any).captureStream();
     videoElement.pause();
+  }
+
+  
+  function togglePlayPause() {
+    if (!videoElement) return;
+    if (videoElement.paused) {
+      videoElement.play();
+      isPaused = false;
+    } else {
+      videoElement.pause();
+      isPaused = true;
+    }
+  }
+
+  function setPlaybackSpeed(speed: number) {
+    if (!videoElement) return;
+    playbackSpeed = speed;
+    videoElement.playbackRate = speed;
   }
 
   // --- Calibration handlers ---
@@ -272,6 +293,7 @@
       </div>
 
       <!-- Recording Controls -->
+      <div class="mt-auto">
       <Card.Root class="bg-[#1a1d24] border-gray-800">
         <Card.Content class="flex items-center justify-between p-4">
           <div class="flex items-center gap-4">
@@ -290,11 +312,35 @@
             </div>
           </div>
           <div class="flex gap-3">
+            {#if simulationMode && session?.isConnected()}
+              <div class="flex items-center gap-2 mr-2">
+                <Button size="icon" variant="ghost" onclick={togglePlayPause}>
+                  {#if isPaused}<Play class="w-4 h-4" />{:else}<Pause class="w-4 h-4" />{/if}
+                </Button>
+                <select 
+                  class="bg-[#0f1116] border border-gray-700 rounded px-2 py-1 text-sm text-white"
+                  bind:value={playbackSpeed}
+                  onchange={(e) => setPlaybackSpeed(parseFloat(e.currentTarget.value))}
+                >
+                  <option value="0.25">0.25x</option>
+                  <option value="0.5">0.5x</option>
+                  <option value="1">1x</option>
+                  <option value="1.5">1.5x</option>
+                  <option value="2">2x</option>
+                </select>
+              </div>
+            {/if}
             {#if !stream}
               <Button disabled variant="secondary">Start Camera First</Button>
             {:else if !session?.isConnected()}
-              <Button onclick={handleStartAnalysis} variant="secondary">
-                <Play class="w-4 h-4 mr-2" /> Start Analysis
+              <Button 
+                onclick={handleStartAnalysis} 
+                variant="secondary"
+                disabled={calibrationMode}
+                class={calibrationMode ? "opacity-50 cursor-not-allowed" : ""}
+                title={calibrationMode ? "Complete calibration before starting analysis" : ""}
+              >
+                <Play class="w-4 h-4 mr-2" /> {calibrationMode ? "Calibrating..." : "Start Analysis"}
               </Button>
             {:else}
               <Button onclick={requestStopAnalysis} variant="destructive">
@@ -304,77 +350,23 @@
           </div>
         </Card.Content>
       </Card.Root>
+      </div>
 
-      <!-- Live Shot Log -->
-      <Card.Root class="bg-[#1a1d24] border-gray-800 flex flex-col min-h-0 relative">
-        <Card.Header class="pb-2 flex flex-row items-center justify-between">
-          <Card.Title class="text-white">Live Shot Log</Card.Title>
-          {#if teamsConfigured}
-            <div class="flex bg-[#0f1116] rounded-full p-1 border border-gray-700">
-              <button
-                class="px-3 py-1 text-xs font-medium rounded-full transition-colors {eventLogFilter === 'all'
-                  ? 'bg-[#9333ea] text-white'
-                  : 'text-gray-400 hover:text-white'}"
-                onclick={() => (eventLogFilter = "all")}>All</button
-              >
-              <button
-                class="px-3 py-1 text-xs font-medium rounded-full transition-colors flex items-center gap-1 {eventLogFilter === 'team1'
-                  ? 'bg-[#1a1d24] text-white'
-                  : 'text-gray-400 hover:text-white'}"
-                onclick={() => (eventLogFilter = "team1")}
-                ><div class="w-1.5 h-1.5 rounded-full" style="background-color: {team0Color}"></div>
-                {team0Name}</button
-              >
-              <button
-                class="px-3 py-1 text-xs font-medium rounded-full transition-colors flex items-center gap-1 {eventLogFilter === 'team2'
-                  ? 'bg-[#1a1d24] text-white'
-                  : 'text-gray-400 hover:text-white'}"
-                onclick={() => (eventLogFilter = "team2")}
-                ><div class="w-1.5 h-1.5 rounded-full" style="background-color: {team1Color}"></div>
-                {team1Name}</button
-              >
-            </div>
-          {/if}
-        </Card.Header>
-        <Card.Content class="p-0 max-h-[400px] overflow-y-auto">
-          <div class="flex flex-col">
-            {#each logs.filter((l) => eventLogFilter === "all" || (eventLogFilter === "team1" && l.team === team0Name) || (eventLogFilter === "team2" && l.team === team1Name)) as log}
-              <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-              <div
-                class="flex items-center gap-4 p-4 border-b border-gray-800 last:border-0 cursor-pointer transition-colors
-                  {selectedShotId === log.id ? 'bg-white/10' : 'hover:bg-white/5'}"
-                onclick={() => (selectedShotId = selectedShotId === log.id ? null : log.id)}
-              >
-                <div
-                  class="w-6 h-6 rounded-full flex items-center justify-center shrink-0 {log.result === 'made'
-                    ? 'bg-green-500/20 text-green-500'
-                    : 'bg-red-500/20 text-red-500'}"
-                >
-                  {#if log.result === "made"}<Check class="w-4 h-4" />{:else}<X class="w-4 h-4" />{/if}
-                </div>
-                <div class="flex-1 flex items-center gap-2">
-                  <span class="text-gray-400 font-mono text-xs shrink-0">[{formatMs(log.timestamp_ms)}]</span>
-                  <span class="text-white font-medium text-sm">{log.type}</span>
-                  <span class="text-gray-400 text-sm capitalize">{log.result}</span>
-                  <span class="text-gray-600 text-sm hidden sm:inline-block truncate">- {log.location}</span>
-                </div>
-                {#if log.team}
-                  <div
-                    class="shrink-0 px-2 py-0.5 rounded text-xs font-medium bg-[#2a2d34] text-gray-300 border border-gray-700 max-w-[100px] truncate"
-                  >
-                    {log.team}
-                  </div>
-                {/if}
-              </div>
-            {/each}
-          </div>
-        </Card.Content>
-      </Card.Root>
+      
     </div>
 
     <!-- Right Column -->
-    <div class="flex flex-col gap-6 self-start sticky top-6">
-      {#if teamsConfigured}
+    <div class="flex flex-col gap-6 justify-between h-full">
+      <div class="flex flex-col gap-6">
+              {#if !session?.isConnected()}
+          <!-- Empty State for Stats -->
+          <div class="flex flex-col items-center justify-center py-12 px-4 rounded-xl border-2 border-dashed border-gray-700 bg-[#1a1d24]/50">
+            <Activity class="w-10 h-10 text-gray-600 mb-3" />
+            <p class="text-gray-500 font-medium text-sm">Statistics</p>
+            <p class="text-gray-600 text-xs mt-1">Start analysis to view shot statistics</p>
+          </div>
+        {:else}
+{#if teamsConfigured}
         <div class="flex bg-[#0f1116] rounded-xl p-1.5 border border-gray-800 shadow-xl overflow-hidden shadow-black/50">
           <button
             class="flex-1 py-2 px-4 text-sm font-bold flex items-center justify-center gap-2 rounded-lg transition-all duration-300 {activeTab ===
@@ -422,14 +414,7 @@
             </Card.Root>
           {/each}
         </div>
-        <ShotChart
-          shotPoints={activeTab === "team1"
-            ? shotPoints.filter((p) => p.team === team0Name)
-            : activeTab === "team2"
-              ? shotPoints.filter((p) => p.team === team1Name)
-              : shotPoints}
-          {selectedShotId}
-        />
+
       {:else}
         <!-- Comparison View -->
         <Card.Root class="bg-[#1a1d24] border-gray-800 flex flex-col pt-4 min-h-0">
@@ -518,7 +503,100 @@
           </Card.Content>
         </Card.Root>
       {/if}
+        {/if}
+      </div>
+
+      {#if session?.isConnected() && activeTab !== "comparison"}
+        <div class="w-full mt-auto self-end">
+          <ShotChart
+            shotPoints={activeTab === "team1"
+              ? shotPoints.filter((p) => p.team === team0Name)
+              : activeTab === "team2"
+                ? shotPoints.filter((p) => p.team === team1Name)
+                : shotPoints}
+            {selectedShotId}
+          />
+        </div>
+      {/if}
     </div>
+  </div>
+
+
+  <div class="mt-6 w-full">
+    <!-- Live Shot Log -->
+      <Card.Root class="bg-[#1a1d24] border-gray-800 flex flex-col min-h-0 relative">
+        <Card.Header class="pb-2 flex flex-row items-center justify-between">
+          <Card.Title class="text-white">Live Shot Log</Card.Title>
+          {#if teamsConfigured}
+            <div class="flex bg-[#0f1116] rounded-full p-1 border border-gray-700">
+              <button
+                class="px-3 py-1 text-xs font-medium rounded-full transition-colors {eventLogFilter === 'all'
+                  ? 'bg-[#9333ea] text-white'
+                  : 'text-gray-400 hover:text-white'}"
+                onclick={() => (eventLogFilter = "all")}>All</button
+              >
+              <button
+                class="px-3 py-1 text-xs font-medium rounded-full transition-colors flex items-center gap-1 {eventLogFilter === 'team1'
+                  ? 'bg-[#1a1d24] text-white'
+                  : 'text-gray-400 hover:text-white'}"
+                onclick={() => (eventLogFilter = "team1")}
+                ><div class="w-1.5 h-1.5 rounded-full" style="background-color: {team0Color}"></div>
+                {team0Name}</button
+              >
+              <button
+                class="px-3 py-1 text-xs font-medium rounded-full transition-colors flex items-center gap-1 {eventLogFilter === 'team2'
+                  ? 'bg-[#1a1d24] text-white'
+                  : 'text-gray-400 hover:text-white'}"
+                onclick={() => (eventLogFilter = "team2")}
+                ><div class="w-1.5 h-1.5 rounded-full" style="background-color: {team1Color}"></div>
+                {team1Name}</button
+              >
+            </div>
+          {/if}
+        </Card.Header>
+        <Card.Content class="p-0 max-h-[400px] overflow-y-auto">
+          
+          {#if logs.length === 0 && !session?.isConnected()}
+            <div class="flex flex-col items-center justify-center py-16 text-gray-500">
+              <List class="w-10 h-10 mb-3 opacity-40" />
+              <p class="text-sm font-medium">No shots recorded</p>
+              <p class="text-xs text-gray-600 mt-1">Shot events will appear here during analysis</p>
+            </div>
+          {:else}
+<div class="flex flex-col">
+            {#each logs.filter((l) => eventLogFilter === "all" || (eventLogFilter === "team1" && l.team === team0Name) || (eventLogFilter === "team2" && l.team === team1Name)) as log}
+              <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+              <div
+                class="flex items-center gap-4 p-4 border-b border-gray-800 last:border-0 cursor-pointer transition-colors
+                  {selectedShotId === log.id ? 'bg-white/10' : 'hover:bg-white/5'}"
+                onclick={() => (selectedShotId = selectedShotId === log.id ? null : log.id)}
+              >
+                <div
+                  class="w-6 h-6 rounded-full flex items-center justify-center shrink-0 {log.result === 'made'
+                    ? 'bg-green-500/20 text-green-500'
+                    : 'bg-red-500/20 text-red-500'}"
+                >
+                  {#if log.result === "made"}<Check class="w-4 h-4" />{:else}<X class="w-4 h-4" />{/if}
+                </div>
+                <div class="flex-1 flex items-center gap-2">
+                  <span class="text-gray-400 font-mono text-xs shrink-0">[{formatMs(log.timestamp_ms)}]</span>
+                  <span class="text-white font-medium text-sm">{log.type}</span>
+                  <span class="text-gray-400 text-sm capitalize">{log.result}</span>
+                  <span class="text-gray-600 text-sm hidden sm:inline-block truncate">- {log.location}</span>
+                </div>
+                {#if log.team}
+                  <div
+                    class="shrink-0 px-2 py-0.5 rounded text-xs font-medium bg-[#2a2d34] text-gray-300 border border-gray-700 max-w-[100px] truncate"
+                  >
+                    {log.team}
+                  </div>
+                {/if}
+              </div>
+            {/each}
+          </div>
+          {/if}
+        </Card.Content>
+      </Card.Root>
   </div>
 
   <!-- Global Start Overlay -->
