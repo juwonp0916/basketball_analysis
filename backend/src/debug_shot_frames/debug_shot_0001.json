@@ -1,0 +1,25 @@
+{
+  "shot_id": 1,
+  "sequence_id": 156,
+  "is_made": true,
+  "shooter_position_px": {
+    "x": 253.0,
+    "y": 234.0
+  },
+  "court_position_m": [
+    3.912937320848825,
+    1.5475188366904435
+  ],
+  "zone": 1,
+  "shot_type": "2pt",
+  "calibration_mode": "4-point",
+  "frame_dims_pipeline": [
+    640,
+    360
+  ],
+  "frame_dims_actual": [
+    480,
+    270
+  ],
+  "note": "Use this frame with: python static_shot_localization.py --image /Users/kyunuya/Desktop/HKUST/FYP/basketball_analysis/backend/src/utils/../debug_shot_frames/debug_shot_0001.jpg"
+}

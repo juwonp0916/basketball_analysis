@@ -1087,11 +1087,13 @@ class ShotDetector:
                     if self.enable_localization and self.shot_localizer:
                         court_position = self.shot_localizer.map_to_court(shot_location)
 
-                        # Classify zone and shot type
+                        # Classify zone and shot type.
+                        # determine_zone expects centered X ∈ [-7.5, +7.5]; homography outputs X ∈ [0, 15].
                         if court_position[0] is not None and court_position[1] is not None:
                             from statistics import TeamStatistics
+                            from constants import COURT_WIDTH
                             stats = TeamStatistics(quarters=[float('inf')])
-                            zone = stats.determine_zone(court_position[0], court_position[1])
+                            zone = stats.determine_zone(court_position[0] - COURT_WIDTH / 2, court_position[1])
 
                             if zone:
                                 is_three = stats.determine_is_three_pt(zone)

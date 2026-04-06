@@ -1,24 +1,20 @@
 import { BACKEND_URL } from "$lib";
 
 export const CALIBRATION_LABLES = [
-  "Baseline Left Sideline",
-  "Baseline Left Penalty Box",
-  "Baseline Right Penalty Box",
-  "Baseline Right Sideline",
-  "Free Throw Line Left",
-  "Free Throw Line Right",
+  "Baseline Left Paint Corner",
+  "Baseline Right Paint Corner",
+  "FT Line Left Corner",
+  "FT Line Right Corner",
 ] as const;
 
 export const CALIBRATION_COLORS = [
   "#eab308",
   "#22c55e",
-  "#22c55e",
-  "#eab308",
   "#d946ef",
-  "#d946ef",
+  "#3b82f6",
 ] as const;
 
-export const MAX_CALIBRATION_POINTS = 6;
+export const MAX_CALIBRATION_POINTS = 4;
 
 export type CalibrationPoint = { x: number; y: number };
 
@@ -45,11 +41,20 @@ export function toDisplayCoords(
   };
 }
 
+export type CalibrationResult = {
+  success: boolean;
+  error?: string;
+  point_errors?: number[];
+  avg_error?: number;
+  court_outline_pixels?: number[][][];
+};
+
 export async function submitCalibration(
   points: CalibrationPoint[],
   imageWidth: number,
-  imageHeight: number
-): Promise<{ success: boolean; error?: string }> {
+  imageHeight: number,
+  mode: string = "4-point"
+): Promise<CalibrationResult> {
   const res = await fetch(`${BACKEND_URL}/calibration`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -57,6 +62,7 @@ export async function submitCalibration(
       points: points.map((p) => [p.x, p.y]),
       image_width: imageWidth,
       image_height: imageHeight,
+      mode,
     }),
   });
   return res.json();

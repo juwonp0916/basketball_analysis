@@ -96,7 +96,19 @@ class VideoShotLocalizer:
                         print(f"ERROR: Calibration file has {len(data['points'])} points, expected 6")
                         print("Running new calibration...")
                     else:
-                        self.calibration_points = data['points']
+                        pts = np.array(data['points'], dtype=np.float32)
+
+                        # Scale points if calibration was done at a different resolution
+                        cal_dims = data.get('image_dimensions')
+                        if cal_dims and (cal_dims[0] != self.width or cal_dims[1] != self.height):
+                            sx = self.width / cal_dims[0]
+                            sy = self.height / cal_dims[1]
+                            print(f"  Rescaling calibration from {cal_dims[0]}x{cal_dims[1]} "
+                                  f"→ {self.width}x{self.height} (sx={sx:.3f}, sy={sy:.3f})")
+                            pts[:, 0] *= sx
+                            pts[:, 1] *= sy
+
+                        self.calibration_points = pts.tolist()
                         print("Loaded 6-point calibration:")
                         for i, (point, label) in enumerate(zip(self.calibration_points, CALIBRATION_LABELS)):
                             print(f"  {i+1}. {label}: ({point[0]:.1f}, {point[1]:.1f})")

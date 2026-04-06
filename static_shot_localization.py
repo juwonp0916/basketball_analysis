@@ -95,6 +95,17 @@ class StaticShotLocalizer:
                         print("Running new calibration...")
                     else:
                         self.calibration_points = np.array(data['points'], dtype=np.float32)
+
+                        # Scale points if calibration was done at a different resolution
+                        cal_dims = data.get('image_dimensions')
+                        if cal_dims and (cal_dims[0] != self.width or cal_dims[1] != self.height):
+                            sx = self.width / cal_dims[0]
+                            sy = self.height / cal_dims[1]
+                            print(f"  Rescaling calibration from {cal_dims[0]}x{cal_dims[1]} "
+                                  f"→ {self.width}x{self.height} (sx={sx:.3f}, sy={sy:.3f})")
+                            self.calibration_points[:, 0] *= sx
+                            self.calibration_points[:, 1] *= sy
+
                         print("Loaded 6-point calibration:")
                         sys.path.insert(0, 'backend/score_detection')
                         from constants import CALIBRATION_LABELS
@@ -473,9 +484,10 @@ class StaticShotLocalizer:
         if self.court_position is None:
             return None
 
-        # Use TeamStatistics for zone classification
+        # Use TeamStatistics for zone classification.
+        # determine_zone expects centered X ∈ [-7.5, +7.5]; homography outputs X ∈ [0, 15].
         stats = TeamStatistics(quarters=[float('inf')])
-        zone = stats.determine_zone(self.court_position[0], self.court_position[1])
+        zone = stats.determine_zone(self.court_position[0] - 7.5, self.court_position[1])
         self.zone = zone
 
         if zone:

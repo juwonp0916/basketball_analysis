@@ -61,6 +61,11 @@ class DetectorState:
     attempt_time: int = 0
     ball_entered: bool = False
     last_point_in_region: Any = None
+    # Shooter candidate captured when ball first enters score region.
+    # At that moment the ball is just arriving at the rim; the shooter has not
+    # yet moved far.  We store this immediately so the later confirmation step
+    # (when the ball exits the rim) uses the right player's foot position.
+    fallback_candidate_pos: Any = None
 
     shot_id_counter: int = 0
     last_frame: Any = None  # Most recent frame for fallback person detection
@@ -86,16 +91,18 @@ class StreamingShotDetector:
         calibration_points: Optional[List[List[float]]] = None,
         frame_width: int = 1280,
         frame_height: int = 720,
-        frame_rate: float = 30.0
+        frame_rate: float = 30.0,
+        calibration_mode: str = "4-point"
     ):
         """
         Initialize the streaming shot detector.
 
         Args:
-            calibration_points: Optional 6-point calibration for court localization
+            calibration_points: Optional 4 or 6-point calibration for court localization
             frame_width: Expected frame width in pixels
             frame_height: Expected frame height in pixels
             frame_rate: Expected frame rate (for timing calculations)
+            calibration_mode: "4-point" or "6-point"
         """
         # Load YOLO model once
         self.model = YOLO(env['weights_path'], verbose=False)
@@ -107,10 +114,14 @@ class StreamingShotDetector:
         self.height = frame_height
         self.frame_rate = frame_rate
 
-        # Inference dimensions (rounded to multiples of 32)
-        # Use 50% resolution for better detection (was 30% - too aggressive)
-        self.inference_width = ((int(frame_width * 0.5) + 31) // 32) * 32
-        self.inference_height = ((int(frame_height * 0.5) + 31) // 32) * 32
+        # Inference dimensions (rounded to multiples of 32).
+        # Use 50% of source resolution, but enforce a 640px floor so the ball
+        # is large enough for YOLO to detect even on low-res WebRTC streams.
+        MIN_INFERENCE_WIDTH = 640
+        raw_w = max(MIN_INFERENCE_WIDTH, int(frame_width * 0.5))
+        raw_h = max(int(MIN_INFERENCE_WIDTH * frame_height / frame_width), int(frame_height * 0.5))
+        self.inference_width  = ((raw_w + 31) // 32) * 32
+        self.inference_height = ((raw_h + 31) // 32) * 32
 
         # Timing constants (based on frame rate) - reduced to avoid blocking legitimate shots
         self.MISS_ATTEMPT_COOLDOWN = int(frame_rate * 1.5)  # Reduced from 2.5s to 1.5s
@@ -128,17 +139,25 @@ class StreamingShotDetector:
         self.DEDUPLICATION_SAFETY_COOLDOWN = int(frame_rate * DEDUPLICATION_SAFETY_COOLDOWN_SEC)
 
         # Temporal shot detection parameters (Option 1: Multi-frame voting)
-        self.SHOOT_TEMPORAL_WINDOW = 15  # frames (~0.5s at 30fps)
-        self.MIN_SHOOT_DETECTIONS = 3    # Need 3+ shoot detections in window to trigger
+        # NOTE: process_frame skips odd sequence_ids, and shoot detection only runs
+        # at sequence_id % 5 == 0.  Combined: shoot fires at LCM(2,5) = every 10th id.
+        # In a 15-frame window that yields at most 2 detections, so MIN=3 can never
+        # be satisfied.  Correct values: window large enough for 2+ detection intervals,
+        # minimum kept at 2 (achievable with intervals of 10 in a 25-frame window).
+        self.SHOOT_TEMPORAL_WINDOW = 25  # frames — covers 3 detection intervals of 10
+        self.MIN_SHOOT_DETECTIONS = 2    # Need 2+ shoot detections (achievable at 10-frame intervals)
 
         # Temporal trajectory validation parameters (Option 2: Ball trajectory)
-        self.TRAJECTORY_WINDOW = 10      # frames to analyze for trajectory
-        self.MIN_UPWARD_RATIO = 0.6      # 60% of frames must show upward motion
+        # Window must be wide enough to reach back to where the ball was still
+        # rising — shoot detection fires every 10 sequence_ids, so by the time
+        # the 2nd detection triggers the check the ball may already be descending.
+        self.TRAJECTORY_WINDOW = 30      # frames — covers ~3 shoot detection intervals
+        self.MIN_UPWARD_RATIO = 0.3      # 30%: ball only needs upward motion in some frames
         self.UPWARD_VELOCITY_THRESHOLD = -2  # pixels/frame (negative = upward in image coords)
 
         # Shot localization
         self.calibration_points = calibration_points
-        self.calibration_mode = "6-point"  # Default mode
+        self.calibration_mode = calibration_mode
         self.shot_localizer = None
         self._setup_localization()
 
@@ -166,7 +185,7 @@ class StreamingShotDetector:
                 image_dimensions=(self.width, self.height),
                 court_img_path=court_img_path,
                 enable_visualization=False,  # Disable file-based visualization for streaming
-                calibration_mode=getattr(self, 'calibration_mode', '6-point')
+                calibration_mode=getattr(self, 'calibration_mode', '4-point')
             )
         except Exception as e:
             print(f"[StreamingShotDetector] Failed to initialize localizer: {e}")
@@ -176,7 +195,7 @@ class StreamingShotDetector:
         self,
         points: List[List[float]],
         dimensions: Tuple[int, int],
-        mode: str = "6-point"
+        mode: str = "4-point"
     ) -> bool:
         """
         Update calibration for live calibration support.
@@ -192,9 +211,11 @@ class StreamingShotDetector:
         self.calibration_points = points
         self.calibration_mode = mode
         self.width, self.height = dimensions
-        # Use 50% resolution for better detection (was 30% - too aggressive)
-        self.inference_width = ((int(self.width * 0.5) + 31) // 32) * 32
-        self.inference_height = ((int(self.height * 0.5) + 31) // 32) * 32
+        MIN_INFERENCE_WIDTH = 640
+        raw_w = max(MIN_INFERENCE_WIDTH, int(self.width * 0.5))
+        raw_h = max(int(MIN_INFERENCE_WIDTH * self.height / self.width), int(self.height * 0.5))
+        self.inference_width  = ((raw_w + 31) // 32) * 32
+        self.inference_height = ((raw_h + 31) // 32) * 32
 
         try:
             self._setup_localization()
@@ -378,12 +399,16 @@ class StreamingShotDetector:
 
                     # Only trigger if threshold met (multi-frame voting)
                     if num_detections >= self.MIN_SHOOT_DETECTIONS:
-                        # Option 2: Validate ball trajectory before confirming
+                        # Trajectory validation is a soft gate:
+                        #   - 2 detections: trajectory must pass (low confidence)
+                        #   - 3+ detections: bypass trajectory (high confidence from voting alone)
                         trajectory_valid = self._validate_ball_trajectory(sequence_id)
+                        high_confidence = num_detections >= 3
 
-                        if trajectory_valid:
+                        if trajectory_valid or high_confidence:
                             shoot_detected = True
-                            logger.info(f"[Temporal] SHOT CONFIRMED: {num_detections} shoot detections + valid trajectory")
+                            reason = "valid trajectory" if trajectory_valid else f"{num_detections} detections (high confidence)"
+                            logger.info(f"[Temporal] SHOT CONFIRMED: {num_detections} shoot detections, {reason}")
 
                             # Scale shoot box
                             x1_shoot = int(box[0][0] * self.width / self.inference_width)
@@ -401,7 +426,10 @@ class StreamingShotDetector:
                                 'timestamp': timestamp_ms,
                                 'shoot_confidence': conf,
                                 'shooter_position': shooter_position,
-                                'temporal_detections': num_detections  # Track how many frames voted
+                                'temporal_detections': num_detections,
+                                # Store the full-res frame at detection time for debug saving.
+                                # This is the frame that still has ball + shooter visible.
+                                'detection_frame': self.state.last_frame,
                             }
                             self.state.shoot_pos.append(shot_data)
                             self.state.pending_shot_group.append(shot_data)
@@ -452,7 +480,14 @@ class StreamingShotDetector:
                 continue
 
             intersection_area = (x_right - x_left) * (y_bottom - y_top)
-            overlap_ratio = intersection_area / shoot_area if shoot_area > 0 else 0
+            person_area = (x2_person - x1_person) * (y2_person - y1_person)
+
+            # Measure what fraction of the PERSON is inside the shoot box.
+            # Using shoot_area in the denominator allowed any bystander who
+            # happened to stand inside a large shoot box to pass the 30% threshold.
+            # Using person_area instead selects whoever has the most of their
+            # body inside the shoot region — that person is the shooter.
+            overlap_ratio = intersection_area / person_area if person_area > 0 else 0
 
             if overlap_ratio >= 0.3 and overlap_ratio > best_overlap:
                 best_overlap = overlap_ratio
@@ -467,67 +502,94 @@ class StreamingShotDetector:
         frame: np.ndarray
     ) -> Optional[Dict[str, float]]:
         """
-        Fallback shooter detection: run the main model and find the person
-        closest to the last known ball position (IoU-based, like static_shot_localization).
-        Returns foot position (center-x, bottom-y) of the best match.
+        Find the shooter by scanning the current frame first, then falling back
+        to recent frame history if the current-frame match is poor.
+
+        For 3PT shots the ball travels far from the shooter before reaching the
+        rim. The current frame (ball at rim) may return a defender or bystander
+        as the "nearest" person.  Scanning history with the ball position at each
+        historical moment finds the frame where someone was holding/just-released
+        the ball — i.e. the smallest ball-to-person distance — which is the shooter.
+
+        Strategy:
+          1. Run inference on the current frame; record the nearest person + distance.
+          2. If that distance is below CLOSE_MATCH_PX, return immediately (no history needed).
+          3. Otherwise scan up to MAX_HISTORY_FRAMES recent frames.  For each, use the
+             ball position recorded at that frame's sequence_id (falling back to the
+             nearest-in-time ball entry).  The frame with the globally smallest
+             ball-to-person distance wins — that is most likely the release frame.
         """
         if len(self.state.ball_pos) == 0:
             return None
 
-        ball_center = self.state.ball_pos[-1][0]
-        ball_w = self.state.ball_pos[-1][2]
-        ball_h = self.state.ball_pos[-1][3]
-        ball_box = (
-            ball_center[0] - ball_w // 2,
-            ball_center[1] - ball_h // 2,
-            ball_center[0] + ball_w // 2,
-            ball_center[1] + ball_h // 2,
-        )
+        CLOSE_MATCH_PX = 250   # if current frame already has someone this close, stop
+        MAX_HISTORY_FRAMES = 8  # cap to limit extra inference cost
 
+        # Build lookup: sequence_id → ball center from recorded history
+        ball_by_seq = {entry[1]: entry[0] for entry in self.state.ball_pos}
+
+        def _run_inference_on(det_frame, ball_center):
+            """Return (best_person_dict, best_dist) for one frame."""
+            results = self.model(det_frame, stream=True, verbose=False,
+                                 imgsz=self.inference_width, device=self.device,
+                                 conf=0.25, max_det=10)
+            bp = None
+            bd = float('inf')
+            for r in results:
+                for box in r.boxes:
+                    if self.class_names[int(box.cls[0])] != 'person':
+                        continue
+                    if float(box.conf[0]) < 0.3:
+                        continue
+                    coords = box.xyxy[0]
+                    x1 = int(coords[0] * self.width / self.inference_width)
+                    y1 = int(coords[1] * self.height / self.inference_height)
+                    x2 = int(coords[2] * self.width / self.inference_width)
+                    y2 = int(coords[3] * self.height / self.inference_height)
+                    pcx = (x1 + x2) / 2
+                    pcy = (y1 + y2) / 2
+                    dist = math.sqrt((ball_center[0] - pcx) ** 2 +
+                                     (ball_center[1] - pcy) ** 2)
+                    if dist < bd:
+                        bd = dist
+                        bp = {'x': pcx, 'y': float(y2)}
+            return bp, bd
+
+        # ── Step 1: current frame ────────────────────────────────────────────────
+        current_ball = self.state.ball_pos[-1][0]
         det_frame = cv2.resize(frame, (self.inference_width, self.inference_height))
-        results = self.model(det_frame, stream=True, verbose=False,
-                             imgsz=self.inference_width, device=self.device,
-                             conf=0.25, max_det=10)
+        best_person, best_dist = _run_inference_on(det_frame, current_ball)
 
-        best_person = None
-        best_iou = 0.0
+        logger.debug(f"[NEAREST] current frame: ball={current_ball}, dist={best_dist:.1f}px")
 
-        for r in results:
-            for box in r.boxes:
-                cls = int(box.cls[0])
-                if self.class_names[cls] != 'person':
-                    continue
-                conf = float(box.conf[0])
-                if conf < 0.3:  # Lowered from 0.4 to match static tool sensitivity
-                    continue
+        if best_dist <= CLOSE_MATCH_PX:
+            return best_person
 
-                coords = box.xyxy[0]
-                x1 = int(coords[0] * self.width / self.inference_width)
-                y1 = int(coords[1] * self.height / self.inference_height)
-                x2 = int(coords[2] * self.width / self.inference_width)
-                y2 = int(coords[3] * self.height / self.inference_height)
+        # ── Step 2: scan frame history ───────────────────────────────────────────
+        # Iterate from most-recent to oldest so we find the release frame quickly.
+        history_frames = self.state.frame_history[-MAX_HISTORY_FRAMES:]
+        for hist_frame, seq_id, _ts in reversed(history_frames):
+            # Use ball position at this historical moment if available
+            if seq_id in ball_by_seq:
+                hist_ball = ball_by_seq[seq_id]
+            else:
+                # Fall back to closest recorded ball position by seq_id
+                closest = min(self.state.ball_pos,
+                              key=lambda b: abs(b[1] - seq_id), default=None)
+                hist_ball = closest[0] if closest else current_ball
 
-                # IoU between ball box and person box
-                ix1 = max(ball_box[0], x1)
-                iy1 = max(ball_box[1], y1)
-                ix2 = min(ball_box[2], x2)
-                iy2 = min(ball_box[3], y2)
+            candidate, dist = _run_inference_on(hist_frame, hist_ball)
+            logger.debug(f"[NEAREST] history seq={seq_id}: ball={hist_ball}, dist={dist:.1f}px")
 
-                if ix2 <= ix1 or iy2 <= iy1:
-                    continue
+            if dist < best_dist:
+                best_dist = dist
+                best_person = candidate
 
-                inter = (ix2 - ix1) * (iy2 - iy1)
-                area1 = (ball_box[2] - ball_box[0]) * (ball_box[3] - ball_box[1])
-                area2 = (x2 - x1) * (y2 - y1)
-                union = area1 + area2 - inter
-                iou = inter / union if union > 0 else 0
+            # Stop early if we've found a very close match
+            if best_dist <= CLOSE_MATCH_PX:
+                break
 
-                if iou > best_iou:
-                    best_iou = iou
-                    center_x = (x1 + x2) / 2
-                    bottom_y = y2  # foot position
-                    best_person = {'x': center_x, 'y': bottom_y}
-
+        logger.debug(f"[NEAREST] final: dist={best_dist:.1f}px, person={best_person}")
         return best_person
 
     def _reinfer_shooter_from_history(self) -> Optional[Dict[str, float]]:
@@ -766,6 +828,19 @@ class StreamingShotDetector:
             else:
                 self.state.ball_entered = True
                 self.state.attempt_time = 1
+                # Capture shooter candidate NOW — ball just arrived at the rim so
+                # the shooter is still in roughly their release position.  Storing
+                # this here prevents the stale-frame problem that occurs when we
+                # wait until the ball is confirmed in/out of the net (by which time
+                # the shooter has run down the court).
+                if self.state.last_frame is not None:
+                    self.state.fallback_candidate_pos = self._find_nearest_person_to_ball(
+                        self.state.last_frame
+                    )
+                    logger.info(
+                        f"[FALLBACK] Captured shooter candidate at ball-enters-rim: "
+                        f"{self.state.fallback_candidate_pos}"
+                    )
 
             if not self.state.last_point_in_region:
                 self.state.last_point_in_region = self.state.ball_pos[-1]
@@ -781,13 +856,21 @@ class StreamingShotDetector:
                 self.state.makes += 1
                 self.state.attempts += 1
 
-                # Find shooter via nearest person to ball (foot position)
-                shooter_pos = None
-                if self.state.last_frame is not None:
-                    shooter_pos = self._find_nearest_person_to_ball(self.state.last_frame)
-                if shooter_pos is None and self.state.ball_pos:
-                    ball_x, ball_y = self.state.ball_pos[-1][0]
-                    shooter_pos = {'x': ball_x, 'y': ball_y}
+                # Use the shooter candidate captured when the ball first entered the
+                # score region (much closer to release time than the current frame).
+                shooter_pos = self.state.fallback_candidate_pos
+
+                # Reset state regardless of whether we can localise
+                self.state.attempt_cooldown = self.MADE_ATTEMPT_COOLDOWN
+                self.state.last_point_in_region = None
+                self.state.ball_entered = False
+                self.state.attempt_time = 0
+                self.state.fallback_candidate_pos = None
+                if len(self.state.pending_shot_group) > 0:
+                    self.state.pending_shot_group = []
+
+                if shooter_pos is None:
+                    logger.warning("[FALLBACK] Made shot: no person detected — emitting without position")
 
                 # Create shot event for made shot
                 shot_data = {
@@ -796,16 +879,6 @@ class StreamingShotDetector:
                     'shooter_position': shooter_pos
                 }
                 shot_event = self._create_shot_event(shot_data, True, sequence_id)
-
-                self.state.attempt_cooldown = self.MADE_ATTEMPT_COOLDOWN
-                self.state.last_point_in_region = None
-                self.state.ball_entered = False
-                self.state.attempt_time = 0
-
-                # Clear pending to prevent duplicates
-                if len(self.state.pending_shot_group) > 0:
-                    self.state.pending_shot_group = []
-
                 self._add_to_recent_shots(shot_data, sequence_id)
                 return shot_event
             else:
@@ -817,13 +890,21 @@ class StreamingShotDetector:
             if self.state.attempt_time >= self.ATTEMPT_DETECTION_INTERVAL:
                 self.state.attempts += 1
 
-                # Find shooter via nearest person to ball (foot position)
-                shooter_pos = None
-                if self.state.last_frame is not None:
-                    shooter_pos = self._find_nearest_person_to_ball(self.state.last_frame)
-                if shooter_pos is None and self.state.ball_pos:
-                    ball_x, ball_y = self.state.ball_pos[-1][0]
-                    shooter_pos = {'x': ball_x, 'y': ball_y}
+                # Use the shooter candidate captured when the ball first entered the
+                # score region (much closer to release time than the current frame).
+                shooter_pos = self.state.fallback_candidate_pos
+
+                # Reset state regardless of whether we can localise
+                self.state.attempt_cooldown = self.MISS_ATTEMPT_COOLDOWN
+                self.state.attempt_time = 0
+                self.state.ball_entered = False
+                self.state.last_point_in_region = None
+                self.state.fallback_candidate_pos = None
+                if len(self.state.pending_shot_group) > 0:
+                    self.state.pending_shot_group = []
+
+                if shooter_pos is None:
+                    logger.warning("[FALLBACK] Missed shot: no person detected — emitting without position")
 
                 # Create shot event for missed shot
                 shot_data = {
@@ -832,15 +913,6 @@ class StreamingShotDetector:
                     'shooter_position': shooter_pos
                 }
                 shot_event = self._create_shot_event(shot_data, False, sequence_id)
-
-                self.state.attempt_cooldown = self.MISS_ATTEMPT_COOLDOWN
-                self.state.attempt_time = 0
-                self.state.ball_entered = False
-                self.state.last_point_in_region = None
-
-                if len(self.state.pending_shot_group) > 0:
-                    self.state.pending_shot_group = []
-
                 self._add_to_recent_shots(shot_data, sequence_id)
                 return shot_event
 
@@ -863,21 +935,39 @@ class StreamingShotDetector:
         # Transform to court coordinates if localization enabled
         if self.shot_localizer and shooter_pos:
             try:
-                court_position = self.shot_localizer.map_to_court(
-                    (shooter_pos['x'], shooter_pos['y'])
+                px, py = shooter_pos['x'], shooter_pos['y']
+                court_position = self.shot_localizer.map_to_court((px, py))
+                logger.info(
+                    f"[LOCALIZE] mode={self.calibration_mode} "
+                    f"shooter_px=({px:.1f},{py:.1f}) "
+                    f"frame_dims=({self.width}x{self.height}) "
+                    f"→ court=({court_position[0]:.2f}m, {court_position[1]:.2f}m)"
                 )
 
                 if court_position[0] is not None and court_position[1] is not None:
                     from statistics import TeamStatistics
                     stats = TeamStatistics(quarters=[float('inf')])
-                    zone = stats.determine_zone(court_position[0], court_position[1])
+                    # determine_zone uses a centered coordinate system (X ∈ [-7.5, +7.5])
+                    # but the homography outputs origin-at-left-corner (X ∈ [0, 15]).
+                    # Shift X by -7.5 before classifying the zone.
+                    from constants import COURT_WIDTH
+                    zone = stats.determine_zone(court_position[0] - COURT_WIDTH / 2, court_position[1])
 
                     if zone:
                         is_three = stats.determine_is_three_pt(zone)
                         shot_type = '3pt' if is_three else '2pt'
             except Exception as e:
-                print(f"[StreamingShotDetector] Court localization failed for "
-                      f"shooter_pos=({shooter_pos['x']:.1f}, {shooter_pos['y']:.1f}): {e}")
+                logger.error(
+                    f"[LOCALIZE] Court localization failed for "
+                    f"shooter_pos=({shooter_pos['x']:.1f}, {shooter_pos['y']:.1f}): {e}"
+                )
+        elif not self.shot_localizer:
+            logger.warning(
+                f"[LOCALIZE] shot_localizer is None! "
+                f"calibration_mode={self.calibration_mode}, "
+                f"calibration_points={'set' if self.calibration_points else 'None'}. "
+                f"Localization skipped — court_position will be None."
+            )
 
         # Team detection (only if configured and we have shooter position)
         team_id = None
@@ -900,7 +990,7 @@ class StreamingShotDetector:
         else:
             logger.warning(f"Team detection skipped: configured={self.team_detector.is_configured}, shooter_pos={shooter_pos}, frame_exists={self.state.last_frame is not None}")
 
-        return ShotEvent(
+        event = ShotEvent(
             shot_id=self.state.shot_id_counter,
             timestamp_ms=shot_data.get('timestamp', 0),
             sequence_id=sequence_id,
@@ -912,6 +1002,11 @@ class StreamingShotDetector:
             team_id=team_id,
             team_confidence=team_confidence
         )
+        # Attach the raw frame from shoot-detection time for debug saving.
+        # This keeps ShotEvent a clean dataclass while still letting the pipeline
+        # save a useful frame that still contains ball + shooter together.
+        event._detection_frame = shot_data.get('detection_frame')
+        return event
 
     def _deduplicate_shot_group(self, shot_group: List) -> Optional[Dict]:
         """Deduplicate shot group and return representative shot"""
@@ -945,7 +1040,16 @@ class StreamingShotDetector:
         if current_subgroup:
             subgroups.append(current_subgroup)
 
-        representative = subgroups[0][0].copy()
+        # Within the first subgroup, prefer a detection that actually has a
+        # shooter_position over one that doesn't.  The very first detection in the
+        # group fires earliest (when the "shoot" class first appears) and sometimes
+        # has no associated person yet; a slightly later detection in the same group
+        # typically has a cleaner overlap with the shooter's body.
+        candidates = subgroups[0]
+        representative = next(
+            (s for s in candidates if s.get('shooter_position')),
+            candidates[0]
+        ).copy()
         representative['grouped_frames'] = len(subgroups[0])
         representative['total_raw_detections'] = len(shot_group)
 

@@ -6,7 +6,6 @@ import cv2
 from constants import (
     MAP_WIDTH,
     MAP_HEIGHT,
-    BASKET_X,
     BASKET_Y,
     PENALTY_BOX_X1,
     PENALTY_BOX_X2,
@@ -59,22 +58,22 @@ class TeamStatistics:
         return shot
 
     def determine_zone(self, x, y):
-        if not x or not y:
+        if x is None or y is None:
             return None
 
         # FIBA court: X ∈ [-7.5, +7.5]m, Y ∈ [0, 14]m
         half_width = MAP_WIDTH / 2  # 7.5m
         if not (-half_width <= x <= half_width and 0 <= y <= MAP_HEIGHT):
             return None
-        
-        zone = None
-        distance = np.sqrt((x - BASKET_X) ** 2 + (y - BASKET_Y) ** 2)
-        
+
+        # x is in centered coordinates ([-7.5, +7.5]), so basket is at x=0
+        distance = np.sqrt(x ** 2 + (y - BASKET_Y) ** 2)
+
         is_three_pt = x < THREE_PT_LEFT or x > THREE_PT_RIGHT or distance > THREE_PT_RADIUS
         column = 1 if x < PENALTY_BOX_X1 else 2 if x < PENALTY_BOX_X2 else 3
 
         if not is_three_pt:
-            if y > PENALTY_BOX_Y2:
+            if y >= PENALTY_BOX_Y2:
                 zone = 4
             else:
                 zone = column
@@ -84,6 +83,9 @@ class TeamStatistics:
                     zone = 8
                 elif x > THREE_PT_RIGHT:
                     zone = 9
+                else:
+                    # Near-baseline between corner 3 spots — treat as closest column
+                    zone = column
             else:
                 zone = column + 4
 

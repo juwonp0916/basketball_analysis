@@ -108,9 +108,9 @@ class CourtRenderer:
         )
         ax.add_patch(arc_patch)
 
-        # Basket (hoop) - circle at (25, 5.25), radius 0.75
+        # Basket (hoop) - circle at (25, 7), radius 0.75
         basket = patches.Circle(
-            (25, 5.25), 0.75,
+            (25, 7), 0.75,
             linewidth=2, edgecolor=CourtRenderer.BASKET_COLOR, facecolor='none'
         )
         ax.add_patch(basket)
