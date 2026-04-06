@@ -266,10 +266,63 @@ class ConnectionManager:
                 await asyncio.sleep(0.5)
 
     async def cleanup(self, pc):
-        self.pcs.discard(pc)
+        """Gracefully cleanup all resources for a connection and reset state."""
+        logger.info("Starting connection cleanup...")
+        
+        # 1. Stop shot detection pipeline
+        if self.shot_pipeline:
+            await self.shot_pipeline.stop()
+            self.shot_pipeline = None
+            logger.info("Shot pipeline stopped")
+        
+        # 2. Stop dummy broadcast
+        await self.stop_dummy_broadcast()
+        logger.info("Dummy broadcast stopped")
+        
+        # 3. Stop all track consumers
         for c in list(self.consumers):
             c.stop()
-        await pc.close()
+        self.consumers.clear()
+        logger.info("Track consumers stopped")
+        
+        # 4. Create fresh frame buffer (clears all queued frames)
+        self.frame_buffer = SharedFrameBuffer(maxsize=60)
+        logger.info("Frame buffer reset")
+        
+        # 5. Reset calibration state
+        self.calibration_points = None
+        self.calibration_dimensions = None
+        self._is_calibrated = False
+        logger.info("Calibration state reset")
+        
+        # 6. Clear data channel reference
+        self.active_data_channel = None
+        
+        # 7. Reset sequence counter
+        self._dummy_seq = 0
+        
+        # 8. Close peer connection
+        self.pcs.discard(pc)
+        try:
+            await pc.close()
+        except Exception as e:
+            logger.warning(f"Error closing peer connection: {e}")
+        
+        logger.info("Connection cleanup complete - all state reset for next session")
+
+    async def reset_session_state(self) -> None:
+        """Reset all accumulated data without closing the connection."""
+        # Reset pipeline stats
+        if self.shot_pipeline:
+            self.shot_pipeline.full_reset()
+        
+        # Reset dummy sequence
+        self._dummy_seq = 0
+        
+        # Clear frame buffer
+        self.frame_buffer = SharedFrameBuffer(maxsize=60)
+        
+        logger.info("Session state reset (connection maintained)")
 
     # ============ Calibration & Detection Methods ============
 

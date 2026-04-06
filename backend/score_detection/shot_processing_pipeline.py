@@ -158,6 +158,24 @@ class ShotProcessingPipeline:
         self._sequence_id = 0
         logger.info("Statistics reset")
 
+    def full_reset(self) -> None:
+        """
+        Complete reset of all pipeline state for a fresh session.
+        Call this when stopping analysis to ensure clean state for next session.
+        """
+        # Reset stats
+        self.reset_stats()
+        
+        # Reset team calibration state
+        self._team_calibrated = False
+        self._calibration_frames = 0
+        
+        # Reset team detector if available
+        if hasattr(self, 'detector') and hasattr(self.detector, 'team_detector'):
+            self.detector.team_detector.reset()
+            
+        logger.info("Full pipeline reset complete")
+
     def get_current_stats(self) -> GameStats:
         """Return current accumulated statistics as GameStats"""
         total = self._two_pt_total + self._three_pt_total
