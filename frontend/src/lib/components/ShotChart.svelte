@@ -31,8 +31,8 @@
       </div>
     </Card.Header>
   {/if}
-  <Card.Content class="flex-1 relative {hideHeader ? 'p-0' : 'p-4'} min-h-0">
-    <div class="w-full h-full relative" bind:clientWidth={containerWidth} bind:clientHeight={containerHeight}>
+  <Card.Content class="flex-1 relative flex items-center justify-center {hideHeader ? 'p-0' : 'p-4'} min-h-0">
+    <div class="relative max-h-full max-w-full" style="aspect-ratio: 50 / 47; height: 100%; width: auto;" bind:clientWidth={containerWidth} bind:clientHeight={containerHeight}>
       <Chart data={shotPoints} x="x" y="y" xDomain={[0, 50]} yDomain={[47, 0]} padding={chartPadding}>
         <Svg>
           <svg width={innerWidth} height={innerHeight} viewBox="0 0 50 47" preserveAspectRatio="none" style="overflow: visible;">
