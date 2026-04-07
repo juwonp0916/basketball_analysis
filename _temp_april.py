@@ -10,9 +10,7 @@ Connects the streaming shot detector to the WebRTC infrastructure, handling:
 
 import asyncio
 import logging
-import os
 import time
-from pathlib import Path
 from typing import Optional, Callable, List, Tuple, Any
 
 from schema import (
@@ -46,8 +44,7 @@ class ShotProcessingPipeline:
         calibration_points: Optional[List[List[float]]] = None,
         frame_width: int = 1280,
         frame_height: int = 720,
-        frame_rate: float = 30.0,
-        calibration_mode: str = "4-point"
+        frame_rate: float = 30.0
     ):
         """
         Initialize the processing pipeline.
@@ -68,33 +65,19 @@ class ShotProcessingPipeline:
         self.frame_width = frame_width
         self.frame_height = frame_height
         self.frame_rate = frame_rate
-        self.calibration_mode = calibration_mode
-
-        # Raw calibration points (in the coordinate space of the calibration frame).
-        # On the first incoming frame we detect whether WebRTC delivers a different
-        # resolution and rescale these points to the actual frame — no frame upscaling.
-        self._calibration_points_raw = [list(p) for p in calibration_points] if calibration_points else None
-        self._calibration_rescaled = False
 
         # Initialize detector
         self.detector = StreamingShotDetector(
             calibration_points=calibration_points,
             frame_width=frame_width,
             frame_height=frame_height,
-            frame_rate=frame_rate,
-            calibration_mode=calibration_mode
+            frame_rate=frame_rate
         )
 
         # Pipeline state
         self._running = False
         self._task: Optional[asyncio.Task] = None
         self._sequence_id = 0
-
-        # Debug: save frames on shot detection
-        self._debug_frame_dir = Path(__file__).parent.parent.parent / "debug_shot_frames"
-        self._debug_frame_dir.mkdir(parents=True, exist_ok=True)
-        self._debug_frame_count = 0
-        self._first_frame_logged = False
 
         # Stats tracking
         self._two_pt_made = 0
@@ -106,8 +89,8 @@ class ShotProcessingPipeline:
         # Auto-calibration state
         self._team_calibrated = False
         self._calibration_frames = 0
-        self._calibration_max_frames = 5  # Try for up to 5 frames to calibrate
-
+        self._calibration_max_frames = 5 # Try for up to 5 frames to calibrate
+        
         logger.info("ShotProcessingPipeline initialized")
 
     async def start(self) -> None:
@@ -141,7 +124,7 @@ class ShotProcessingPipeline:
         self,
         points: List[List[float]],
         dimensions: Tuple[int, int],
-        mode: str = "4-point"
+        mode: str = "6-point"
     ) -> bool:
         """
         Update calibration (for live calibration).
@@ -157,8 +140,6 @@ class ShotProcessingPipeline:
         success = self.detector.set_calibration(points, dimensions, mode)
         if success:
             self.frame_width, self.frame_height = dimensions
-            self._calibration_points_raw = [list(p) for p in points]
-            self._calibration_rescaled = False  # Allow rescaling on next frame
             logger.info(f"Calibration updated: {mode} ({len(points)} points), {dimensions}")
         return success
 
@@ -235,39 +216,6 @@ class ShotProcessingPipeline:
                 img = frame.to_ndarray(format="bgr24")
                 timestamp_ms = int(time.time() * 1000)
 
-                # Check frame dimensions against calibration dimensions.
-                # If WebRTC delivers a different resolution (e.g. 640×360 vs 1920×1080),
-                # rescale the calibration points to the actual frame size on the first
-                # frame — cheaper and higher-quality than upscaling every raw frame.
-                actual_h, actual_w = img.shape[:2]
-                if not self._first_frame_logged:
-                    self._first_frame_logged = True
-                    logger.info(
-                        f"[DIM CHECK] First frame: actual={actual_w}x{actual_h}, "
-                        f"calibration={self.frame_width}x{self.frame_height}, "
-                        f"calibration_mode={self.calibration_mode}"
-                    )
-
-                if (actual_w != self.frame_width or actual_h != self.frame_height) and not self._calibration_rescaled:
-                    if self._calibration_points_raw:
-                        scale_x = actual_w / self.frame_width
-                        scale_y = actual_h / self.frame_height
-                        scaled_pts = [[p[0] * scale_x, p[1] * scale_y] for p in self._calibration_points_raw]
-                        self.detector.set_calibration(scaled_pts, (actual_w, actual_h), self.calibration_mode)
-                        logger.info(
-                            f"[DIM RESCALE] Calibration points scaled from "
-                            f"{self.frame_width}x{self.frame_height} → {actual_w}x{actual_h} "
-                            f"(scale_x={scale_x:.3f}, scale_y={scale_y:.3f})"
-                        )
-                    else:
-                        # No calibration points — update detector dimensions only
-                        self.detector.width = actual_w
-                        self.detector.height = actual_h
-                        logger.warning(f"[DIM RESCALE] No calibration points to rescale; updating dims only.")
-                    self.frame_width = actual_w
-                    self.frame_height = actual_h
-                    self._calibration_rescaled = True
-
                 # Auto-calibrate teams on the first few frames
                 if not self._team_calibrated and self._calibration_frames < self._calibration_max_frames:
                     success = await asyncio.to_thread(self.detector.auto_calibrate_teams, img)
@@ -305,23 +253,11 @@ class ShotProcessingPipeline:
 
                     updated_stats = self.get_current_stats()
                     shot_msg = self._create_shot_payload(shot_event, updated_stats)
-
-                    # Save debug frame BEFORE broadcasting so the image is on disk
-                    # by the time the frontend receives the event and fetches it.
-                    # Use the frame stored at shoot-detection time if available —
-                    # that frame still has ball + shooter visible together.
-                    # Fall back to current frame if not stored (fallback path shots).
-                    _det_frame = getattr(shot_event, '_detection_frame', None)
-                    debug_img = img if _det_frame is None else _det_frame
-                    self._save_debug_frame(debug_img, shot_event)
-
                     await self.broadcaster(shot_msg.model_dump())
 
                     logger.info(
                         f"Shot detected: id={shot_event.shot_id}, "
-                        f"made={shot_event.is_made}, type={shot_event.shot_type}, "
-                        f"shooter_px={shot_event.shooter_position}, "
-                        f"court_m={shot_event.court_position}"
+                        f"made={shot_event.is_made}, type={shot_event.shot_type}"
                     )
 
                 self._sequence_id += 1
@@ -369,39 +305,22 @@ class ShotProcessingPipeline:
         # Get coordinates in court space first, then convert to frontend chart space.
         # Court system: X ∈ [0, 15], Y ∈ [0, 14] (origin at left baseline corner)
         # Frontend chart: X ∈ [0, 50], Y ∈ [0, 47] (origin at baseline-left corner)
-        # Default to basket position so shots with unknown location still appear on the chart
-        court_x = 7.5
-        court_y = 1.575
-        _COURT_W, _COURT_H = 15.0, 14.0
+        court_x = 0.0
+        court_y = 0.0
         if shot_event.court_position and shot_event.court_position[0] is not None:
-            cx, cy = shot_event.court_position[0], shot_event.court_position[1]
-            if 0.0 <= cx <= _COURT_W and 0.0 <= cy <= _COURT_H:
-                court_x, court_y = cx, cy
-            else:
-                # Out-of-bounds homography result — do not plot at wrong position.
-                # Clamp to court boundary so the point appears on the nearest valid
-                # edge rather than off the chart, and log for investigation.
-                court_x = max(0.0, min(_COURT_W, cx))
-                court_y = max(0.0, min(_COURT_H, cy))
-                logger.warning(
-                    f"[PAYLOAD] Out-of-bounds court coords ({cx:.2f}, {cy:.2f}) — "
-                    f"clamped to ({court_x:.2f}, {court_y:.2f}). "
-                    f"Shooter px={shot_event.shooter_position}"
-                )
+            court_x = shot_event.court_position[0]
+            court_y = shot_event.court_position[1]
         elif shot_event.shooter_position:
             # Normalize pixel position to court coordinates
             court_x = shot_event.shooter_position['x'] / self.frame_width * 15.0
             court_y = shot_event.shooter_position['y'] / self.frame_height * 14.0
 
-        # Convert court meters → frontend chart coordinates.
-        # Matches CourtRenderer.meters_to_svg used by the static tool.
-        # X: [0, 15]m → [0, 50]
+        # Convert court meters → frontend chart coordinates
+        # X: [0, 15]m → [0, 50] (left to right)
         coord_x = (court_x / 15.0 * 50.0)
-        # Y: [0, 14]m → [0, 47]  (NO inversion here)
-        # The Svelte chart uses yDomain={[47, 0]} which already inverts the scale
-        # (same effect as matplotlib's ylim(47, 0) in the static tool),
-        # putting baseline (Y=0) at the top and half-court (Y=47) at the bottom.
-        coord_y = (court_y / 14.0 * 47.0)
+        # Y: [0, 14]m → [47, 0] (baseline at top, half-court at bottom)
+        # Flip Y-axis: baseline (Y=0) should map to top of chart
+        coord_y = ((14.0 - court_y) / 14.0 * 47.0)
 
         shot_type_literal = "3pt" if shot_event.shot_type == '3pt' else "2pt"
         result_literal = "made" if shot_event.is_made else "missed"
@@ -440,94 +359,6 @@ class ShotProcessingPipeline:
         }
 
         return zone_names.get(zone, "Unknown")
-
-    def _save_debug_frame(self, img: Any, shot_event: Any) -> None:
-        """
-        Save the frame at shot detection to disk for offline debugging.
-
-        The saved frame can be used with static_shot_localization.py to verify
-        whether the localization module itself is correct for that exact image.
-        A sidecar .txt file records the shooter pixel position and court result.
-        """
-        try:
-            import cv2
-            import json
-            import numpy as np
-
-            self._debug_frame_count += 1
-            # Name by shot_id so the frontend can fetch it via /debug/shot/{shot_id}
-            stem = f"debug_shot_{shot_event.shot_id:04d}"
-            img_path = self._debug_frame_dir / f"{stem}.jpg"
-            meta_path = self._debug_frame_dir / f"{stem}.json"
-
-            # Draw shooter position on a copy for easy visual inspection
-            vis = img.copy()
-            sp = shot_event.shooter_position
-            if sp:
-                px, py = int(sp['x']), int(sp['y'])
-                cv2.circle(vis, (px, py), 12, (0, 0, 255), -1)
-                cv2.circle(vis, (px, py), 15, (255, 255, 255), 2)
-                cv2.putText(vis, f"FOOT ({px},{py})", (px + 18, py),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-
-            # Draw last known ball position
-            try:
-                ball_history = self.detector.state.ball_pos
-                if ball_history:
-                    ball_center = ball_history[-1][0]
-                    bx, by = int(ball_center[0]), int(ball_center[1])
-                    cv2.circle(vis, (bx, by), 14, (0, 165, 255), 2)   # Orange
-                    cv2.circle(vis, (bx, by), 4, (0, 165, 255), -1)
-                    cv2.putText(vis, f"BALL ({bx},{by})", (bx + 16, by),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2)
-            except Exception:
-                pass
-
-            # Draw court outline overlay onto the debug frame
-            localizer = self.detector.shot_localizer
-            if localizer is not None:
-                try:
-                    polylines = localizer.get_court_outline_pixels()
-                    for polyline in polylines:
-                        if len(polyline) < 2:
-                            continue
-                        pts = np.array(polyline, dtype=np.int32).reshape((-1, 1, 2))
-                        cv2.polylines(vis, [pts], isClosed=False, color=(255, 255, 0), thickness=2)
-                    H_inv = np.linalg.inv(localizer.homography_matrix)
-                    basket_pt = np.array([[[7.5, 1.575]]], dtype=np.float64)
-                    basket_px = cv2.perspectiveTransform(basket_pt, H_inv)[0][0]
-                    bx, by = int(basket_px[0]), int(basket_px[1])
-                    cv2.circle(vis, (bx, by), 14, (0, 255, 255), 2)
-                    cv2.putText(vis, "BASKET", (bx + 16, by),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-                except Exception as court_e:
-                    logger.warning(f"[DEBUG FRAME] Could not draw court overlay: {court_e}")
-
-            cv2.imwrite(str(img_path), vis)
-
-            meta = {
-                "shot_id": shot_event.shot_id,
-                "sequence_id": self._sequence_id,
-                "is_made": shot_event.is_made,
-                "shooter_position_px": sp,
-                "court_position_m": list(shot_event.court_position) if shot_event.court_position else None,
-                "zone": shot_event.zone,
-                "shot_type": shot_event.shot_type,
-                "calibration_mode": self.calibration_mode,
-                "frame_dims_pipeline": [self.frame_width, self.frame_height],
-                "frame_dims_actual": [img.shape[1], img.shape[0]],
-                "note": (
-                    "Use this frame with: "
-                    f"python static_shot_localization.py --image {img_path}"
-                )
-            }
-            with open(meta_path, "w") as f:
-                json.dump(meta, f, indent=2)
-
-            logger.info(f"[DEBUG FRAME] Saved shot frame → {img_path}")
-
-        except Exception as e:
-            logger.warning(f"[DEBUG FRAME] Could not save frame: {e}")
 
     @property
     def is_running(self) -> bool:

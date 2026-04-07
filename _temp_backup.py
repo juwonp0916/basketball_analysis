@@ -162,9 +162,21 @@ class ShotProcessingPipeline:
             logger.info(f"Calibration updated: {mode} ({len(points)} points), {dimensions}")
         return success
 
-    def get_team_colors_hex(self) -> Tuple[str, str]:
-        """Get the hex colors of the auto-calibrated teams"""
-        return self.detector.get_team_colors_hex()
+    def set_team_colors(self, team0_color: str, team1_color: str) -> bool:
+        """
+        Set team colors for jersey-based team detection.
+
+        Args:
+            team0_color: Color name for team 0 (e.g., 'red', 'blue')
+            team1_color: Color name for team 1
+
+        Returns:
+            True if colors were set successfully
+        """
+        success = self.detector.set_team_colors(team0_color, team1_color)
+        if success:
+            logger.info(f"Team colors set: team0={team0_color}, team1={team1_color}")
+        return success
 
     def reset_stats(self) -> None:
         """Reset accumulated statistics"""
@@ -176,24 +188,6 @@ class ShotProcessingPipeline:
         self._shot_id_counter = 0
         self._sequence_id = 0
         logger.info("Statistics reset")
-
-    def full_reset(self) -> None:
-        """
-        Complete reset of all pipeline state for a fresh session.
-        Call this when stopping analysis to ensure clean state for next session.
-        """
-        # Reset stats
-        self.reset_stats()
-        
-        # Reset team calibration state
-        self._team_calibrated = False
-        self._calibration_frames = 0
-        
-        # Reset team detector if available
-        if hasattr(self, 'detector') and hasattr(self.detector, 'team_detector'):
-            self.detector.team_detector.reset()
-            
-        logger.info("Full pipeline reset complete")
 
     def get_current_stats(self) -> GameStats:
         """Return current accumulated statistics as GameStats"""
@@ -267,19 +261,6 @@ class ShotProcessingPipeline:
                     self.frame_width = actual_w
                     self.frame_height = actual_h
                     self._calibration_rescaled = True
-
-                # Auto-calibrate teams on the first few frames
-                if not self._team_calibrated and self._calibration_frames < self._calibration_max_frames:
-                    success = await asyncio.to_thread(self.detector.auto_calibrate_teams, img)
-                    if success:
-                        self._team_calibrated = True
-                        color0, color1 = self.detector.get_team_colors_hex()
-                        logger.info(f"Auto-calibrated team colors: {color0}, {color1}")
-                        
-                        from schema import TeamColorsPayload
-                        team_colors_msg = TeamColorsPayload(team0_color=color0, team1_color=color1)
-                        await self.broadcaster(team_colors_msg.model_dump())
-                    self._calibration_frames += 1
 
                 # Run YOLO detection in thread pool to avoid blocking
                 shot_event = await asyncio.to_thread(

@@ -23,6 +23,16 @@ class StreamingTeamDetector:
         # Track IDs to Team assignments for temporal smoothing
         self.track_history: Dict[int, List[int]] = {}
 
+    def reset(self) -> None:
+        """
+        Reset detector to unconfigured state for a new session.
+        Clears team colors and tracking history.
+        """
+        self.team0_color = None
+        self.team1_color = None
+        self._configured = False
+        self.track_history.clear()
+
     @property
     def is_configured(self) -> bool:
         return self._configured
@@ -154,13 +164,21 @@ class StreamingTeamDetector:
                 cls = int(box.cls[0])
                 if cls >= len(class_names) or class_names[cls] != 'person':
                     continue
-                if float(box.conf[0]) < 0.4:
+                
+                # IMPROVEMENT 1: Increase confidence threshold from 0.4 to 0.5
+                if float(box.conf[0]) < 0.5:
                     continue
 
                 x1 = int(box.xyxy[0][0] * frame_w / inf_w)
                 y1 = int(box.xyxy[0][1] * frame_h / inf_h)
                 x2 = int(box.xyxy[0][2] * frame_w / inf_w)
                 y2 = int(box.xyxy[0][3] * frame_h / inf_h)
+
+                # IMPROVEMENT 2: Filter small bounding boxes (likely distant spectators)
+                bbox_area = (x2 - x1) * (y2 - y1)
+                min_bbox_area = 4000  # ~63x63 pixels minimum
+                if bbox_area < min_bbox_area:
+                    continue
 
                 jersey_region = self._get_jersey_region((x1, y1, x2, y2), frame)
                 if jersey_region is not None:
