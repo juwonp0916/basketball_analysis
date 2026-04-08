@@ -1,0 +1,25 @@
+{
+  "shot_id": 7,
+  "sequence_id": 1756,
+  "is_made": false,
+  "shooter_position_px": {
+    "x": 98.5,
+    "y": 261
+  },
+  "court_position_m": [
+    8.484680356289527,
+    8.010152901574527
+  ],
+  "zone": 4,
+  "shot_type": "2pt",
+  "calibration_mode": "4-point",
+  "frame_dims_pipeline": [
+    624,
+    312
+  ],
+  "frame_dims_actual": [
+    832,
+    416
+  ],
+  "note": "Use this frame with: python static_shot_localization.py --image /Users/juwonpark/Documents/HKUST/basketball_analysis/backend/src/utils/../debug_shot_frames/debug_shot_0007.jpg"
+}

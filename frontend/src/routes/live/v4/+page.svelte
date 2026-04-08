@@ -127,7 +127,7 @@
     if (!videoElement) return;
     simulationMode = true;
     videoElement.crossOrigin = "anonymous";
-    videoElement.src = `${BACKEND_URL}/video/video6.mp4`;
+    videoElement.src = `${BACKEND_URL}/video/video1.mp4`;
     await new Promise<void>((r) => videoElement!.addEventListener("canplay", () => r(), { once: true }));
     videoElement.playbackRate = playbackSpeed;
     isPaused = true;
