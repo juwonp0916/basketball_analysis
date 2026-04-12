@@ -1,25 +1,16 @@
 {
   "shot_id": 1,
-  "sequence_id": 316,
-  "is_made": true,
+  "sequence_id": 76,
+  "is_made": false,
   "shooter_position_px": {
-    "x": 215.5,
-    "y": 235.0
+    "x": 97.0,
+    "y": 131
   },
   "court_position_m": [
-    8.528577357489619,
-    6.48318213214278
+    -5.0594952364633174,
+    6.866633875026892
   ],
-  "zone": 4,
-  "shot_type": "2pt",
-  "calibration_mode": "4-point",
-  "frame_dims_pipeline": [
-    624,
-    312
-  ],
-  "frame_dims_actual": [
-    624,
-    312
-  ],
-  "note": "Use this frame with: python static_shot_localization.py --image /Users/juwonpark/Documents/HKUST/basketball_analysis/backend/src/utils/../debug_shot_frames/debug_shot_0001.jpg"
-}
+  "zone": null,
+  "shot_type": null,
+  "team_id": 1,
+  "team_confidence": 

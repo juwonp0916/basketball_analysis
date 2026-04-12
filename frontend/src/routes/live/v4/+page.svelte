@@ -212,9 +212,8 @@
         {
           onStatsUpdate: (s) => (globalStats = s),
           onShotDetected: (shot) => {
-            if (!shot.team && teamsConfigured) {
-              const r = Math.random();
-              shot.team = r > 0.5 ? team0Name : team1Name;
+            if (teamsConfigured && shot.team_id != null) {
+              shot.team = shot.team_id === 0 ? team0Name : team1Name;
             }
             logs = [shot, ...logs].slice(0, 50);
             shots = [...shots, shot].slice(-200);
@@ -661,7 +660,7 @@
           </div>
         {:else}
           <div class="flex flex-col">
-            {#each logs.filter((l) => eventLogFilter === "all" || (eventLogFilter === "team1" && l.team === team0Name) || (eventLogFilter === "team2" && l.team === team1Name)) as log}
+            {#each logs.filter((l) => eventLogFilter === "all" || (eventLogFilter === "team1" && l.team === team0Name) || (eventLogFilter === "team2" && l.team === team1Name)) as log (log.id)}
               <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
               <div
                 class="flex items-center gap-4 p-4 border-b border-gray-800 last:border-0 cursor-pointer transition-colors

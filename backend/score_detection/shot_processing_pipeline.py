@@ -37,7 +37,7 @@ class ShotProcessingPipeline:
 
     # Skip threshold: if more than this many frames queued, start skipping
     # Set to 10 for aggressive frame dropping to keep real-time performance
-    SKIP_THRESHOLD = 10
+    SKIP_THRESHOLD = 100000
 
     def __init__(
         self,
@@ -106,7 +106,10 @@ class ShotProcessingPipeline:
         # Auto-calibration state
         self._team_calibrated = False
         self._calibration_frames = 0
-        self._calibration_max_frames = 5  # Try for up to 5 frames to calibrate
+        self._calibration_max_frames = 60   # ~2s at 30fps — accumulation needs more frames
+        self._calibration_retry_interval = 30  # After initial window, retry every N frames
+        self._recheck_interval = 900  # ~30s at 30fps — silent periodic re-check
+        self._last_recheck_seq = 0
 
         logger.info("ShotProcessingPipeline initialized")
 
@@ -184,15 +187,16 @@ class ShotProcessingPipeline:
         """
         # Reset stats
         self.reset_stats()
-        
+
         # Reset team calibration state
         self._team_calibrated = False
         self._calibration_frames = 0
-        
+        self._last_recheck_seq = 0
+
         # Reset team detector if available
         if hasattr(self, 'detector') and hasattr(self.detector, 'team_detector'):
             self.detector.team_detector.reset()
-            
+
         logger.info("Full pipeline reset complete")
 
     def get_current_stats(self) -> GameStats:
@@ -268,18 +272,41 @@ class ShotProcessingPipeline:
                     self.frame_height = actual_h
                     self._calibration_rescaled = True
 
-                # Auto-calibrate teams on the first few frames
-                if not self._team_calibrated and self._calibration_frames < self._calibration_max_frames:
-                    success = await asyncio.to_thread(self.detector.auto_calibrate_teams, img)
-                    if success:
-                        self._team_calibrated = True
-                        color0, color1 = self.detector.get_team_colors_hex()
-                        logger.info(f"Auto-calibrated team colors: {color0}, {color1}")
-                        
-                        from schema import TeamColorsPayload
-                        team_colors_msg = TeamColorsPayload(team0_color=color0, team1_color=color1)
-                        await self.broadcaster(team_colors_msg.model_dump())
+                # --- Team auto-calibration ---
+                if not self._team_calibrated:
+                    # Phase 1: initial window — try every frame
+                    # Phase 2: after window — slow retry every N frames
+                    should_try = (
+                        self._calibration_frames < self._calibration_max_frames
+                        or (self._calibration_frames - self._calibration_max_frames)
+                        % self._calibration_retry_interval == 0
+                    )
+                    if should_try:
+                        success = await asyncio.to_thread(
+                            self.detector.auto_calibrate_teams, img
+                        )
+                        if success:
+                            self._team_calibrated = True
+                            self._last_recheck_seq = self._sequence_id
+                            color0, color1 = self.detector.get_team_colors_hex()
+                            logger.info(
+                                f"Auto-calibrated team colors: {color0}, {color1} "
+                                f"(after {self._calibration_frames + 1} frames)"
+                            )
+
+                            from schema import TeamColorsPayload
+                            team_colors_msg = TeamColorsPayload(
+                                team0_color=color0, team1_color=color1
+                            )
+                            await self.broadcaster(team_colors_msg.model_dump())
                     self._calibration_frames += 1
+
+                elif (self._sequence_id - self._last_recheck_seq) >= self._recheck_interval:
+                    # Silent periodic re-check (no frontend broadcast)
+                    self._last_recheck_seq = self._sequence_id
+                    await asyncio.to_thread(
+                        self.detector.recheck_teams, img
+                    )
 
                 # Run YOLO detection in thread pool to avoid blocking
                 shot_event = await asyncio.to_thread(
@@ -445,9 +472,9 @@ class ShotProcessingPipeline:
         """
         Save the frame at shot detection to disk for offline debugging.
 
-        The saved frame can be used with static_shot_localization.py to verify
-        whether the localization module itself is correct for that exact image.
-        A sidecar .txt file records the shooter pixel position and court result.
+        Draws all detected person bounding boxes colored by team classification,
+        highlights the identified shooter, and adds a legend mapping cluster
+        labels to team names/colors.  A sidecar JSON records full metadata.
         """
         try:
             import cv2
@@ -455,35 +482,140 @@ class ShotProcessingPipeline:
             import numpy as np
 
             self._debug_frame_count += 1
-            # Name by shot_id so the frontend can fetch it via /debug/shot/{shot_id}
             stem = f"debug_shot_{shot_event.shot_id:04d}"
             img_path = self._debug_frame_dir / f"{stem}.jpg"
             meta_path = self._debug_frame_dir / f"{stem}.json"
 
-            # Draw shooter position on a copy for easy visual inspection
             vis = img.copy()
             sp = shot_event.shooter_position
-            if sp:
-                px, py = int(sp['x']), int(sp['y'])
-                cv2.circle(vis, (px, py), 12, (0, 0, 255), -1)
-                cv2.circle(vis, (px, py), 15, (255, 255, 255), 2)
-                cv2.putText(vis, f"FOOT ({px},{py})", (px + 18, py),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
-            # Draw last known ball position
+            # ----------------------------------------------------------
+            # 1. Detect all persons and classify each by team
+            # ----------------------------------------------------------
+            team_det = self.detector.team_detector
+            model = self.detector.model
+            class_names = self.detector.class_names
+            inf_w = self.detector.inference_width
+            inf_h = self.detector.inference_height
+            frame_w = self.detector.width
+            frame_h = self.detector.height
+            device = self.detector.device
+
+            # BGR colors for team 0, team 1, and unclassified
+            TEAM_COLORS_BGR = {
+                0: (0, 200, 0),    # Green for team 0
+                1: (200, 100, 0),  # Blue-ish for team 1
+                None: (128, 128, 128),  # Gray for unclassified
+            }
+            SHOOTER_COLOR_BGR = (0, 0, 255)  # Red for shooter
+
+            person_entries: list = []  # Collected for JSON metadata
+
+            try:
+                det_frame = cv2.resize(img, (inf_w, inf_h))
+                results = model(
+                    det_frame,
+                    stream=True,
+                    verbose=False,
+                    imgsz=inf_w,
+                    device=device,
+                    conf=0.3,
+                    max_det=15,
+                )
+
+                for r in results:
+                    for box in r.boxes:
+                        cls = int(box.cls[0])
+                        if cls >= len(class_names) or class_names[cls] != "person":
+                            continue
+                        if float(box.conf[0]) < 0.3:
+                            continue
+
+                        x1 = int(box.xyxy[0][0] * frame_w / inf_w)
+                        y1 = int(box.xyxy[0][1] * frame_h / inf_h)
+                        x2 = int(box.xyxy[0][2] * frame_w / inf_w)
+                        y2 = int(box.xyxy[0][3] * frame_h / inf_h)
+                        bbox = (x1, y1, x2, y2)
+
+                        track_id = int(box.id[0]) if box.id is not None else None
+
+                        # Classify team
+                        tid, conf = None, 0.0
+                        if team_det.is_configured:
+                            tid, conf = team_det.classify_from_bbox(
+                                img, bbox, track_id=track_id
+                            )
+
+                        # Check if this person is the shooter
+                        is_shooter = False
+                        if sp:
+                            center_x = (x1 + x2) / 2
+                            bottom_y = y2
+                            dist = np.sqrt(
+                                (center_x - sp["x"]) ** 2
+                                + (bottom_y - sp["y"]) ** 2
+                            )
+                            is_shooter = dist < 60  # px threshold
+
+                        color = SHOOTER_COLOR_BGR if is_shooter else TEAM_COLORS_BGR.get(tid, TEAM_COLORS_BGR[None])
+                        thickness = 3 if is_shooter else 2
+                        cv2.rectangle(vis, (x1, y1), (x2, y2), color, thickness)
+
+                        # Label above bbox
+                        team_label = f"Team {tid}" if tid is not None else "?"
+                        label = f"{team_label} ({conf:.0%})"
+                        if is_shooter:
+                            label = f"SHOOTER | {label}"
+                        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)
+                        cv2.rectangle(vis, (x1, y1 - th - 8), (x1 + tw + 4, y1), color, -1)
+                        cv2.putText(
+                            vis, label, (x1 + 2, y1 - 4),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2,
+                        )
+
+                        person_entries.append({
+                            "bbox": [x1, y1, x2, y2],
+                            "team_id": tid,
+                            "confidence": round(conf, 3),
+                            "is_shooter": is_shooter,
+                            "track_id": track_id,
+                        })
+
+            except Exception as det_e:
+                logger.warning(f"[DEBUG FRAME] Person detection overlay failed: {det_e}")
+
+            # ----------------------------------------------------------
+            # 2. Draw shooter foot marker
+            # ----------------------------------------------------------
+            if sp:
+                px, py = int(sp["x"]), int(sp["y"])
+                cv2.circle(vis, (px, py), 12, SHOOTER_COLOR_BGR, -1)
+                cv2.circle(vis, (px, py), 15, (255, 255, 255), 2)
+                cv2.putText(
+                    vis, f"FOOT ({px},{py})", (px + 18, py),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, SHOOTER_COLOR_BGR, 2,
+                )
+
+            # ----------------------------------------------------------
+            # 3. Draw ball position
+            # ----------------------------------------------------------
             try:
                 ball_history = self.detector.state.ball_pos
                 if ball_history:
                     ball_center = ball_history[-1][0]
                     bx, by = int(ball_center[0]), int(ball_center[1])
-                    cv2.circle(vis, (bx, by), 14, (0, 165, 255), 2)   # Orange
+                    cv2.circle(vis, (bx, by), 14, (0, 165, 255), 2)
                     cv2.circle(vis, (bx, by), 4, (0, 165, 255), -1)
-                    cv2.putText(vis, f"BALL ({bx},{by})", (bx + 16, by),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2)
+                    cv2.putText(
+                        vis, f"BALL ({bx},{by})", (bx + 16, by),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2,
+                    )
             except Exception:
                 pass
 
-            # Draw court outline overlay onto the debug frame
+            # ----------------------------------------------------------
+            # 4. Draw court outline overlay
+            # ----------------------------------------------------------
             localizer = self.detector.shot_localizer
             if localizer is not None:
                 try:
@@ -498,13 +630,54 @@ class ShotProcessingPipeline:
                     basket_px = cv2.perspectiveTransform(basket_pt, H_inv)[0][0]
                     bx, by = int(basket_px[0]), int(basket_px[1])
                     cv2.circle(vis, (bx, by), 14, (0, 255, 255), 2)
-                    cv2.putText(vis, "BASKET", (bx + 16, by),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+                    cv2.putText(
+                        vis, "BASKET", (bx + 16, by),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2,
+                    )
                 except Exception as court_e:
                     logger.warning(f"[DEBUG FRAME] Could not draw court overlay: {court_e}")
 
+            # ----------------------------------------------------------
+            # 5. Draw team legend (top-right corner)
+            # ----------------------------------------------------------
+            hex0, hex1 = self.detector.get_team_colors_hex()
+            legend_lines = [
+                f"Shot #{shot_event.shot_id}  {'MADE' if shot_event.is_made else 'MISS'}  {shot_event.shot_type or '?'}",
+                f"Assigned team_id: {shot_event.team_id}  conf: {shot_event.team_confidence:.0%}",
+                "",
+                "--- Team Legend ---",
+                f"Team 0 (cluster 0): jersey {hex0}",
+                f"Team 1 (cluster 1): jersey {hex1}",
+            ]
+            lx, ly = vis.shape[1] - 420, 20
+            line_h = 24
+            # Semi-transparent background
+            overlay = vis.copy()
+            cv2.rectangle(
+                overlay,
+                (lx - 10, ly - 10),
+                (vis.shape[1] - 10, ly + line_h * len(legend_lines) + 10),
+                (0, 0, 0),
+                -1,
+            )
+            cv2.addWeighted(overlay, 0.7, vis, 0.3, 0, vis)
+
+            for i, line in enumerate(legend_lines):
+                y = ly + i * line_h + 16
+                cv2.putText(
+                    vis, line, (lx, y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1,
+                )
+            # Color swatches next to team labels
+            swatch_y0 = ly + 4 * line_h + 6
+            cv2.rectangle(vis, (lx - 6, swatch_y0), (lx - 1, swatch_y0 + 14), TEAM_COLORS_BGR[0], -1)
+            cv2.rectangle(vis, (lx - 6, swatch_y0 + line_h), (lx - 1, swatch_y0 + line_h + 14), TEAM_COLORS_BGR[1], -1)
+
             cv2.imwrite(str(img_path), vis)
 
+            # ----------------------------------------------------------
+            # 6. Write JSON sidecar
+            # ----------------------------------------------------------
             meta = {
                 "shot_id": shot_event.shot_id,
                 "sequence_id": self._sequence_id,
@@ -513,13 +686,17 @@ class ShotProcessingPipeline:
                 "court_position_m": list(shot_event.court_position) if shot_event.court_position else None,
                 "zone": shot_event.zone,
                 "shot_type": shot_event.shot_type,
+                "team_id": shot_event.team_id,
+                "team_confidence": round(shot_event.team_confidence, 3),
+                "team_colors_hex": {"team0": hex0, "team1": hex1},
+                "persons_detected": person_entries,
                 "calibration_mode": self.calibration_mode,
                 "frame_dims_pipeline": [self.frame_width, self.frame_height],
                 "frame_dims_actual": [img.shape[1], img.shape[0]],
                 "note": (
                     "Use this frame with: "
                     f"python static_shot_localization.py --image {img_path}"
-                )
+                ),
             }
             with open(meta_path, "w") as f:
                 json.dump(meta, f, indent=2)

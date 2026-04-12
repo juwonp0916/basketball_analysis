@@ -226,9 +226,7 @@ class StreamingShotDetector:
     def auto_calibrate_teams(self, frame: np.ndarray) -> bool:
         """
         Automatically detect and calibrate the two main team colors in the frame.
-
-        Returns:
-            True if calibration succeeded
+        Accumulates features across calls; returns True when calibration succeeds.
         """
         return self.team_detector.auto_calibrate(
             frame,
@@ -237,7 +235,20 @@ class StreamingShotDetector:
             (self.inference_width, self.inference_height),
             self.device
         )
-        
+
+    def recheck_teams(self, frame: np.ndarray) -> None:
+        """
+        Silent periodic re-check of team colors (drift correction).
+        Does not change is_configured or trigger any broadcast.
+        """
+        self.team_detector.recheck(
+            frame,
+            self.model,
+            self.class_names,
+            (self.inference_width, self.inference_height),
+            self.device
+        )
+
     def get_team_colors_hex(self) -> Tuple[str, str]:
         """Return the hex colors of the auto-calibrated teams."""
         return self.team_detector.get_team_colors_hex()

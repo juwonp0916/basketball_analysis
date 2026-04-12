@@ -21,9 +21,9 @@ output_report = "backend/results/video1_full_report.json"
 FRAME_SKIP = 2  # Process every 2nd frame (15 fps instead of 30 fps)
 MODEL2_SKIP = 5  # Sample Model 2 every 5 processed frames
 
-print("="*70)
+print("=" * 70)
 print("FULL VIDEO ANALYSIS: video1.mp4")
-print("="*70)
+print("=" * 70)
 
 # Load models
 print("\nLoading models...")
@@ -68,7 +68,7 @@ stats = {
 
 # Process video
 print("Processing video...")
-print("-"*70)
+print("-" * 70)
 
 start_time = time.time()
 frame_idx = 0
@@ -191,9 +191,9 @@ with open(output_report, 'w') as f:
     json.dump(stats, f, indent=2)
 
 # Print report
-print("\n" + "="*70)
+print("\n" + "=" * 70)
 print("DETECTION REPORT - video1.mp4 (81 seconds, amateur half-court)")
-print("="*70)
+print("=" * 70)
 
 print(f"\nFrames Analyzed: {total} / {total_frames} total ({total/total_frames*100:.0f}% sampled)")
 
@@ -215,9 +215,9 @@ if stats['shoot_confidences']:
     print(f"  Shoot:  {stats['average_confidences']['shoot']:.3f}")
 
 # Analysis
-print("\n" + "="*70)
+print("\n" + "=" * 70)
 print("ANALYSIS & RECOMMENDATIONS")
-print("="*70)
+print("=" * 70)
 
 print(f"\n📹 Video Type: Amateur half-court (832x416, fixed camera)")
 
@@ -255,9 +255,9 @@ else:
     print("   → Fine-tuning critical for accurate shot detection")
 
 # Recommendations
-print("\n" + "="*70)
+print("\n" + "=" * 70)
 print("NEXT STEPS")
-print("="*70)
+print("=" * 70)
 
 if ball_rate < 0.70 or both_rate < 0.60:
     print("\n📋 RECOMMENDED: Fine-Tuning Workflow")
@@ -278,4 +278,4 @@ else:
     print("   3. Start collecting dataset for future fine-tuning")
 
 print(f"\n💾 Full report saved to: {output_report}")
-print("="*70)
+print("=" * 70)
