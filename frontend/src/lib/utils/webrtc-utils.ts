@@ -62,6 +62,11 @@ export function createAnalysisSession(stream: MediaStream, callbacks: AnalysisCa
     const answer = await sendOffer(pc, `${options.backendUrl}/offer`);
     await pc.setRemoteDescription(new RTCSessionDescription(answer));
     console.log("WebRTC connection established");
+
+    // Lock encoding quality: high bitrate + maintain resolution over framerate.
+    // This prevents the browser from adaptively downscaling the video, which
+    // degrades YOLO detection and jersey color accuracy.
+    await lockSenderQuality(pc);
   }
 
   function stop() {
@@ -105,5 +110,57 @@ export async function sendOffer(pc: RTCPeerConnection, url: string): Promise<Web
   }
 
   return await response.json();
+}
+
+
+/**
+ * Lock video sender encoding parameters to prevent adaptive quality degradation.
+ *
+ * By default, the browser's WebRTC congestion control is free to:
+ *  - Reduce resolution (scale down frames)
+ *  - Reduce framerate
+ *  - Reduce bitrate / increase quantization
+ *
+ * For CV/ML workloads we need consistent resolution and faithful colors, so:
+ *  1. Set degradationPreference to "maintain-resolution" — if the encoder must
+ *     degrade, it should drop frames rather than downscale.
+ *  2. Set a high maxBitrate (8 Mbps) so the encoder has room for quality.
+ *     On a local network this is easily sustainable; on remote links the
+ *     congestion controller will still cap actual throughput below this.
+ *  3. Remove any scaleResolutionDownBy that the browser may have defaulted.
+ */
+async function lockSenderQuality(pc: RTCPeerConnection): Promise<void> {
+  for (const sender of pc.getSenders()) {
+    if (sender.track?.kind !== "video") continue;
+
+    const params = sender.getParameters();
+
+    // degradationPreference: keep resolution, sacrifice framerate if needed
+    params.degradationPreference = "maintain-resolution";
+
+    // Configure each encoding layer
+    if (params.encodings && params.encodings.length > 0) {
+      for (const enc of params.encodings) {
+        enc.maxBitrate = 8_000_000;         // 8 Mbps ceiling
+        enc.scaleResolutionDownBy = 1.0;    // no downscaling
+        // maxFramerate is intentionally left unset so the source
+        // framerate is preserved (typically 30fps from getUserMedia)
+      }
+    }
+
+    try {
+      await sender.setParameters(params);
+      console.log("Video sender quality locked:", {
+        degradationPreference: params.degradationPreference,
+        encodings: params.encodings?.map(e => ({
+          maxBitrate: e.maxBitrate,
+          scaleResolutionDownBy: e.scaleResolutionDownBy,
+        })),
+      });
+    } catch (err) {
+      // setParameters can fail in some browsers / edge cases — not fatal
+      console.warn("Could not lock sender quality:", err);
+    }
+  }
 }
 

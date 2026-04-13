@@ -94,8 +94,28 @@ class ShotProcessingPipeline:
         self._task: Optional[asyncio.Task] = None
         self._sequence_id = 0
 
+        # WEBRTC_TEAM_TEST: optional frame recorder for offline team clustering comparison
+        self._webrtc_recorder = None
+        if os.environ.get("WEBRTC_TEAM_TEST", "0") == "1":
+            try:
+                import importlib.util
+                _test_path = os.path.join(
+                    os.path.dirname(__file__), '..', 'tests', 'test_webrtc_team_clustering.py'
+                )
+                _spec = importlib.util.spec_from_file_location(
+                    "test_webrtc_team_clustering", _test_path
+                )
+                _mod = importlib.util.module_from_spec(_spec)
+                _spec.loader.exec_module(_mod)
+                self._webrtc_recorder = _mod.get_recorder()
+                self._webrtc_test_mod = _mod  # keep reference for finalize
+                if self._webrtc_recorder is not None:
+                    logger.info("[WEBRTC_TEAM_TEST] Frame recorder attached to pipeline")
+            except Exception as e:
+                logger.warning(f"[WEBRTC_TEAM_TEST] Could not load recorder: {e}")
+
         # Video Recorder module (standalone)
-        import score_detection.config as cfg
+        # import score_detection.config as cfg
         import yaml
 
         config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
@@ -150,6 +170,15 @@ class ShotProcessingPipeline:
             except asyncio.CancelledError:
                 pass
             self._task = None
+
+        # WEBRTC_TEAM_TEST: finalize the frame recorder (writes videos in background thread)
+        if self._webrtc_recorder is not None:
+            try:
+                self._webrtc_test_mod.finalize_recorder()
+                logger.info("[WEBRTC_TEAM_TEST] Frame recorder finalized")
+            except Exception as e:
+                logger.warning(f"[WEBRTC_TEAM_TEST] Finalize error: {e}")
+            self._webrtc_recorder = None
 
         logger.info("Shot processing pipeline stopped")
 
@@ -252,6 +281,10 @@ class ShotProcessingPipeline:
                 img = frame.to_ndarray(format="bgr24")
                 timestamp_ms = int(time.time() * 1000)
 
+                # WEBRTC_TEAM_TEST: record raw WebRTC frame for offline comparison
+                if self._webrtc_recorder is not None:
+                    self._webrtc_recorder.record_frame(img)
+
                 # Check frame dimensions against calibration dimensions.
                 # If WebRTC delivers a different resolution (e.g. 640×360 vs 1920×1080),
                 # rescale the calibration points to the actual frame size on the first
@@ -315,11 +348,22 @@ class ShotProcessingPipeline:
                     self._calibration_frames += 1
 
                 elif (self._sequence_id - self._last_recheck_seq) >= self._recheck_interval:
-                    # Silent periodic re-check (no frontend broadcast)
+                    # Periodic re-check with drift detection
                     self._last_recheck_seq = self._sequence_id
+                    old_hex = self.detector.get_team_colors_hex()
                     await asyncio.to_thread(
                         self.detector.recheck_teams, img
                     )
+                    new_hex = self.detector.get_team_colors_hex()
+                    if new_hex != old_hex:
+                        logger.info(
+                            f"Team colors drifted: {old_hex} → {new_hex}, re-broadcasting"
+                        )
+                        from schema import TeamColorsPayload
+                        team_colors_msg = TeamColorsPayload(
+                            team0_color=new_hex[0], team1_color=new_hex[1]
+                        )
+                        await self.broadcaster(team_colors_msg.model_dump())
 
                 # Run YOLO detection in thread pool to avoid blocking
                 shot_event = await asyncio.to_thread(

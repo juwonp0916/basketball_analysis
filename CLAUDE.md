@@ -33,7 +33,7 @@ npm run preview    # Preview production build
 The system has three main layers:
 
 **Frontend (SvelteKit + TypeScript)**
-`/live/v2/+page.svelte` is the primary UI. It captures camera streams, handles court calibration via click-based point marking, and displays shot charts and statistics. Communicates with the backend over WebRTC (video + data channel).
+`/live/v4/+page.svelte` is the primary UI. It captures camera streams, handles court calibration via click-based point marking, and displays shot charts and statistics. Communicates with the backend over WebRTC (video + data channel).
 
 **Backend (FastAPI + aiortc)**
 `backend/main.py` exposes REST endpoints for calibration, team colors, and detection control. `backend/src/utils/webrtc_manager.py` manages WebRTC peer connections, a `SharedFrameBuffer` async queue, and the detection pipeline lifecycle.

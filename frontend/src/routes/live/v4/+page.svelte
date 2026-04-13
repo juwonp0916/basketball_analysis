@@ -104,7 +104,11 @@
   async function handleStartCamera() {
     try {
       stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 1280 }, height: { ideal: 720 } },
+        video: {
+          width:     { min: 1280, ideal: 1920 },
+          height:    { min: 720,  ideal: 1080 },
+          frameRate: { ideal: 30 },
+        },
         audio: false,
       });
       if (videoElement) videoElement.srcObject = stream;
@@ -127,12 +131,12 @@
     if (!videoElement) return;
     simulationMode = true;
     videoElement.crossOrigin = "anonymous";
-    videoElement.src = `${BACKEND_URL}/video/video1.mp4`;
+    videoElement.src = `${BACKEND_URL}/video/video4.mp4`;
     await new Promise<void>((r) => videoElement!.addEventListener("canplay", () => r(), { once: true }));
     videoElement.playbackRate = playbackSpeed;
     isPaused = true;
     await videoElement.play();
-    stream = (videoElement as any).captureStream();
+    stream = (videoElement as any).captureStream(30);  // 30 fps to match detection pipeline
     videoElement.pause();
   }
 
