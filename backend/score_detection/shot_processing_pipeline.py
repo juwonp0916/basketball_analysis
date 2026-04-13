@@ -22,6 +22,10 @@ from schema import (
 
 logger = logging.getLogger(__name__)
 
+# Debug toggle: set BASKETBALL_DEBUG=1 to enable debug frame saving.
+# Default is ON for development; set to 0 for demos/production.
+BASKETBALL_DEBUG = os.environ.get("BASKETBALL_DEBUG", "1") == "1"
+
 
 class ShotProcessingPipeline:
     """
@@ -89,6 +93,15 @@ class ShotProcessingPipeline:
         self._running = False
         self._task: Optional[asyncio.Task] = None
         self._sequence_id = 0
+
+        # Video Recorder module (standalone)
+        import score_detection.config as cfg
+        import yaml
+
+        config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
+        with open(config_path, "r") as f:
+            _env = yaml.safe_load(f)
+        weights_path = os.path.join(os.path.dirname(__file__), _env["weights_path"])
 
         # Debug: save frames on shot detection
         self._debug_frame_dir = Path(__file__).parent.parent.parent / "debug_shot_frames"
@@ -474,8 +487,15 @@ class ShotProcessingPipeline:
 
         Draws all detected person bounding boxes colored by team classification,
         highlights the identified shooter, and adds a legend mapping cluster
-        labels to team names/colors.  A sidecar JSON records full metadata.
+        labels to team names/colors.  A sidecar JSON records full metadata
+        including per-player LAB values, hex colors, and a ground_truth field
+        for manual annotation.
+
+        Controlled by the BASKETBALL_DEBUG environment variable (default: on).
         """
+        if not BASKETBALL_DEBUG:
+            return
+
         try:
             import cv2
             import json
@@ -485,6 +505,8 @@ class ShotProcessingPipeline:
             stem = f"debug_shot_{shot_event.shot_id:04d}"
             img_path = self._debug_frame_dir / f"{stem}.jpg"
             meta_path = self._debug_frame_dir / f"{stem}.json"
+            crops_dir = self._debug_frame_dir / "crops"
+            crops_dir.mkdir(parents=True, exist_ok=True)
 
             vis = img.copy()
             sp = shot_event.shooter_position
@@ -523,6 +545,7 @@ class ShotProcessingPipeline:
                     max_det=15,
                 )
 
+                person_idx = 0
                 for r in results:
                     for box in r.boxes:
                         cls = int(box.cls[0])
@@ -541,10 +564,22 @@ class ShotProcessingPipeline:
 
                         # Classify team
                         tid, conf = None, 0.0
+                        extracted_lab = None
+                        extracted_hex = None
                         if team_det.is_configured:
                             tid, conf = team_det.classify_from_bbox(
                                 img, bbox, track_id=track_id
                             )
+                            # Extract LAB feature for this player (for evaluation)
+                            jersey_region = team_det._get_jersey_region(bbox, img)
+                            if jersey_region is not None:
+                                feat = team_det._extract_color_features(jersey_region)
+                                if feat is not None:
+                                    extracted_lab = feat.tolist()
+                                    extracted_hex = team_det._lab_to_hex(feat)
+                                # Save jersey crop for annotation/evaluation
+                                crop_path = crops_dir / f"{stem}_player_{person_idx}.jpg"
+                                cv2.imwrite(str(crop_path), jersey_region)
 
                         # Check if this person is the shooter
                         is_shooter = False
@@ -579,7 +614,12 @@ class ShotProcessingPipeline:
                             "confidence": round(conf, 3),
                             "is_shooter": is_shooter,
                             "track_id": track_id,
+                            "extracted_lab": extracted_lab,
+                            "extracted_hex": extracted_hex,
+                            "crop_path": f"crops/{stem}_player_{person_idx}.jpg",
+                            "ground_truth_team": None,  # To be filled by annotator
                         })
+                        person_idx += 1
 
             except Exception as det_e:
                 logger.warning(f"[DEBUG FRAME] Person detection overlay failed: {det_e}")
@@ -676,8 +716,19 @@ class ShotProcessingPipeline:
             cv2.imwrite(str(img_path), vis)
 
             # ----------------------------------------------------------
-            # 6. Write JSON sidecar
+            # 6. Write JSON sidecar (extended for evaluation framework)
             # ----------------------------------------------------------
+            # Compute inter-team Delta-E for quality assessment
+            inter_team_delta_e = None
+            team0_lab = None
+            team1_lab = None
+            if team_det.is_configured:
+                team0_lab = team_det.team0_color.tolist()
+                team1_lab = team_det.team1_color.tolist()
+                inter_team_delta_e = round(
+                    team_det._color_distance(team_det.team0_color, team_det.team1_color), 2
+                )
+
             meta = {
                 "shot_id": shot_event.shot_id,
                 "sequence_id": self._sequence_id,
@@ -688,7 +739,11 @@ class ShotProcessingPipeline:
                 "shot_type": shot_event.shot_type,
                 "team_id": shot_event.team_id,
                 "team_confidence": round(shot_event.team_confidence, 3),
-                "team_colors_hex": {"team0": hex0, "team1": hex1},
+                "team_colors": {
+                    "team_0": {"lab": team0_lab, "hex": hex0},
+                    "team_1": {"lab": team1_lab, "hex": hex1},
+                },
+                "inter_team_delta_e": inter_team_delta_e,
                 "persons_detected": person_entries,
                 "calibration_mode": self.calibration_mode,
                 "frame_dims_pipeline": [self.frame_width, self.frame_height],

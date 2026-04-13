@@ -1,7 +1,12 @@
 """
-TeamDetector v2 - Robust team auto-calibration for amateur basketball.
+TeamDetector v3 - Robust team auto-calibration for amateur basketball.
 
-Key improvements over v1:
+Key improvements over v2:
+- CIELAB color space (perceptually uniform, handles achromatic jerseys)
+- Per-crop K-Means (K=3) dominant color extraction (separates jersey from
+  background/shadow contamination)
+- Delta-E (CIE76) distance metric for clustering and classification
+- Properly handles black, white, and dark jerseys where HSV hue is meaningless
 - Resolution-aware filtering (relative bbox size instead of fixed pixel area)
 - Multi-frame feature accumulation (not single-frame all-or-nothing)
 - K=2 clustering + MAD-based outlier removal (no referee color assumption)
@@ -11,9 +16,9 @@ Key improvements over v1:
 
 import cv2
 import numpy as np
+import warnings
 from typing import Optional, Tuple, List, Dict
 from sklearn.cluster import KMeans
-import colorsys
 import logging
 
 logger = logging.getLogger(__name__)
@@ -32,25 +37,36 @@ MIN_PERSON_CONFIDENCE = 0.3
 # Accumulation limits
 MAX_ACCUMULATED_FEATURES = 80  # Cap memory; enough for robust clustering
 
-# Clustering quality gate
-MIN_INTER_CLUSTER_DISTANCE = 25.0  # In HSV-weighted space; reject if teams too similar
+# Clustering quality gate — Delta-E (CIE76) in CIELAB space.
+# Delta-E > 15 means colors are clearly distinguishable to the human eye.
+MIN_INTER_CLUSTER_DISTANCE = 15.0
 
 # MAD outlier removal multiplier (higher = less aggressive)
 MAD_OUTLIER_FACTOR = 2.5
+
+# Per-crop dominant-color K-Means: K=3 to separate jersey / background / other
+PER_CROP_K = 3
+# Minimum pixels in crop for K-Means; below this, fall back to median
+PER_CROP_MIN_PIXELS_FOR_KMEANS = 30
 
 
 class StreamingTeamDetector:
     """
     Identifies shooter's team by analyzing jersey color.
-    Uses multi-frame accumulation + K-Means clustering to discover team colors.
+
+    Uses CIELAB color space with per-crop K-Means dominant color extraction
+    and multi-frame accumulation + K=2 clustering to discover team colors.
+
+    Internal color representation: numpy arrays of [L, a, b] in OpenCV's
+    CIELAB range (L: 0-255, a: 0-255, b: 0-255, with 128 as neutral for a/b).
     """
 
     def __init__(self):
-        self.team0_color: Optional[np.ndarray] = None  # HSV centroid
+        self.team0_color: Optional[np.ndarray] = None  # LAB centroid
         self.team1_color: Optional[np.ndarray] = None
         self._configured = False
 
-        # Multi-frame feature accumulation
+        # Multi-frame feature accumulation (each entry is a LAB [L, a, b] vector)
         self._accumulated_features: List[np.ndarray] = []
 
         # Track IDs to Team assignments for temporal smoothing
@@ -72,7 +88,7 @@ class StreamingTeamDetector:
         return self._configured
 
     # ------------------------------------------------------------------
-    # Jersey / color extraction (unchanged from v1)
+    # Jersey / color extraction — CIELAB + per-crop dominant color
     # ------------------------------------------------------------------
 
     def _get_jersey_region(
@@ -138,51 +154,79 @@ class StreamingTeamDetector:
         return skin_mask == 0
 
     def _extract_color_features(self, jersey_region: np.ndarray) -> Optional[np.ndarray]:
-        """Extract median HSV from non-skin pixels."""
-        hsv = cv2.cvtColor(jersey_region, cv2.COLOR_BGR2HSV)
+        """
+        Extract the dominant jersey color in CIELAB space.
+
+        Uses per-crop K-Means (K=3) to separate the jersey from background
+        and shadow contamination, then returns the centroid of the largest
+        cluster as the representative color.
+
+        Falls back to median LAB if the crop is too small for K-Means.
+
+        Returns:
+            LAB feature vector [L, a, b] as float32, or None if extraction fails.
+        """
+        lab = cv2.cvtColor(jersey_region, cv2.COLOR_BGR2LAB)
         non_skin_mask = self._filter_skin(jersey_region)
 
-        pixels_hsv = hsv.reshape(-1, 3)
+        pixels_lab = lab.reshape(-1, 3).astype(np.float32)
         mask_flat = non_skin_mask.reshape(-1)
-        filtered_pixels = pixels_hsv[mask_flat]
+        filtered_pixels = pixels_lab[mask_flat]
 
         if len(filtered_pixels) < 10:
-            filtered_pixels = pixels_hsv
+            filtered_pixels = pixels_lab
         if len(filtered_pixels) < 5:
             return None
 
-        median_hsv = np.median(filtered_pixels, axis=0).astype(np.float32)
-        return median_hsv
+        # For very small crops, K-Means would over-partition — use median instead.
+        if len(filtered_pixels) < PER_CROP_MIN_PIXELS_FOR_KMEANS:
+            return np.median(filtered_pixels, axis=0).astype(np.float32)
+
+        # K=3 mini-KMeans: typically separates jersey / shadow / background.
+        # Suppress ConvergenceWarning for solid-color patches where K > distinct colors.
+        k = min(PER_CROP_K, len(filtered_pixels))
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=FutureWarning)
+            warnings.filterwarnings("ignore", message="Number of distinct clusters")
+            kmeans = KMeans(n_clusters=k, random_state=0, n_init=3, max_iter=50).fit(filtered_pixels)
+
+        # Pick the largest cluster (most pixels → likely the jersey).
+        labels, counts = np.unique(kmeans.labels_, return_counts=True)
+        largest_cluster = labels[np.argmax(counts)]
+
+        return kmeans.cluster_centers_[largest_cluster].astype(np.float32)
 
     # ------------------------------------------------------------------
-    # Distance helpers (unchanged from v1)
-    # ------------------------------------------------------------------
-
-    def _hue_distance(self, h1: float, h2: float) -> float:
-        """Calculate circular distance between two hues (0-179 in OpenCV)."""
-        diff = abs(h1 - h2)
-        return min(diff, 180 - diff)
-
-    def _color_distance(self, f1: np.ndarray, f2: np.ndarray) -> float:
-        """
-        Distance between two HSV features.
-        Weights hue more heavily, properly handles circular hue.
-        """
-        h_dist = self._hue_distance(f1[0], f2[0])
-        s_dist = abs(f1[1] - f2[1])
-        v_dist = abs(f1[2] - f2[2])
-        return np.sqrt((h_dist * 2.0)**2 + (s_dist * 1.0)**2 + (v_dist * 0.5)**2)
-
-    # ------------------------------------------------------------------
-    # HSV <-> clustering feature conversion
+    # Distance helpers — CIELAB Delta-E (CIE76)
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _hsv_to_cluster_feature(hsv: np.ndarray) -> np.ndarray:
-        """Convert HSV to a KMeans-friendly feature (cos/sin hue + S + V)."""
-        h, s, v = hsv
-        angle = h * 2.0 * np.pi / 180.0
-        return np.array([np.cos(angle) * 100, np.sin(angle) * 100, s, v * 0.5])
+    def _color_distance(f1: np.ndarray, f2: np.ndarray) -> float:
+        """
+        Perceptual color distance between two LAB features (Delta-E CIE76).
+
+        In CIELAB space, Euclidean distance approximates perceived color
+        difference.  Delta-E < 2 is barely perceptible; > 10 is clearly
+        different; > 25 is very different.
+        """
+        diff = f1.astype(np.float64) - f2.astype(np.float64)
+        return float(np.sqrt(np.sum(diff ** 2)))
+
+    # ------------------------------------------------------------------
+    # LAB <-> clustering feature conversion
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _lab_to_cluster_feature(lab: np.ndarray) -> np.ndarray:
+        """
+        Convert LAB to a KMeans-friendly feature with perceptual weighting.
+
+        Chromaticity channels (a, b) are weighted 1.5x relative to lightness (L)
+        to emphasize color differences over pure brightness, while still being
+        able to distinguish black (L≈0) from dark blue (L≈30, b≈-30).
+        """
+        L, a, b = lab.astype(np.float64)
+        return np.array([L, a * 1.5, b * 1.5])
 
     # ------------------------------------------------------------------
     # Core: extract features from a single frame
@@ -197,7 +241,7 @@ class StreamingTeamDetector:
         device: str
     ) -> List[np.ndarray]:
         """
-        Run person detection on one frame and return a list of HSV features.
+        Run person detection on one frame and return a list of LAB features.
         Uses resolution-aware bbox filtering.
         """
         inf_w, inf_h = inference_dims
@@ -256,15 +300,15 @@ class StreamingTeamDetector:
         self, features: List[np.ndarray]
     ) -> Optional[Tuple[np.ndarray, np.ndarray]]:
         """
-        Cluster accumulated features into 2 teams using K=2 + MAD outlier removal.
+        Cluster accumulated LAB features into 2 teams using K=2 + MAD outlier removal.
 
-        Returns (team0_hsv, team1_hsv) on success, or None if quality gate fails.
+        Returns (team0_lab, team1_lab) on success, or None if quality gate fails.
         """
         if len(features) < 2:
             return None
 
-        # Build clustering feature matrix
-        X = np.array([self._hsv_to_cluster_feature(f) for f in features])
+        # Build clustering feature matrix (weighted LAB)
+        X = np.array([self._lab_to_cluster_feature(f) for f in features])
 
         kmeans = KMeans(n_clusters=2, random_state=42, n_init=10).fit(X)
         labels = kmeans.labels_
@@ -298,12 +342,12 @@ class StreamingTeamDetector:
 
         # Re-cluster on cleaned features
         clean_features = [features[i] for i in clean_indices]
-        X_clean = np.array([self._hsv_to_cluster_feature(f) for f in clean_features])
+        X_clean = np.array([self._lab_to_cluster_feature(f) for f in clean_features])
 
         kmeans2 = KMeans(n_clusters=2, random_state=42, n_init=10).fit(X_clean)
         labels2 = kmeans2.labels_
 
-        # Compute per-cluster median HSV (in original HSV space, not cluster space)
+        # Compute per-cluster median LAB (in original LAB space, not weighted)
         team_colors: List[np.ndarray] = []
         for cluster_id in range(2):
             cluster_items = [
@@ -315,12 +359,12 @@ class StreamingTeamDetector:
                 return None  # Degenerate: one cluster is empty
             team_colors.append(np.median(cluster_items, axis=0).astype(np.float32))
 
-        # Quality gate: inter-cluster distance must be large enough
+        # Quality gate: inter-cluster distance must be large enough (Delta-E)
         inter_dist = self._color_distance(team_colors[0], team_colors[1])
         if inter_dist < MIN_INTER_CLUSTER_DISTANCE:
             logger.debug(
                 f"[TeamDetector] Clusters too similar "
-                f"(distance={inter_dist:.1f} < {MIN_INTER_CLUSTER_DISTANCE}), "
+                f"(Delta-E={inter_dist:.1f} < {MIN_INTER_CLUSTER_DISTANCE}), "
                 f"continuing accumulation"
             )
             return None
@@ -385,10 +429,10 @@ class StreamingTeamDetector:
             f"(from {total} accumulated features):"
         )
         logger.info(
-            f"  Team 0 HSV: {self.team0_color} -> {self._hsv_to_hex(self.team0_color)}"
+            f"  Team 0 LAB: {self.team0_color} -> {self._lab_to_hex(self.team0_color)}"
         )
         logger.info(
-            f"  Team 1 HSV: {self.team1_color} -> {self._hsv_to_hex(self.team1_color)}"
+            f"  Team 1 LAB: {self.team1_color} -> {self._lab_to_hex(self.team1_color)}"
         )
 
         return True
@@ -446,11 +490,11 @@ class StreamingTeamDetector:
         drift1 = self._color_distance(matched_c1, self.team1_color)
         max_drift = max(drift0, drift1)
 
-        if max_drift > 80.0:
+        if max_drift > 40.0:
             # Large drift — likely a bad frame or scene change; ignore
             logger.warning(
                 f"[TeamDetector] Re-check drift too large "
-                f"({drift0:.1f}, {drift1:.1f}), ignoring"
+                f"(Delta-E: {drift0:.1f}, {drift1:.1f}), ignoring"
             )
             return
 
@@ -469,21 +513,30 @@ class StreamingTeamDetector:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _hsv_to_hex(hsv: np.ndarray) -> str:
-        """Convert OpenCV HSV (H:0-179, S:0-255, V:0-255) to hex string."""
-        h, s, v = hsv
-        r, g, b = colorsys.hsv_to_rgb(h / 179.0, s / 255.0, v / 255.0)
-        return f"#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}"
+    def _lab_to_hex(lab: np.ndarray) -> str:
+        """
+        Convert OpenCV LAB (L:0-255, a:0-255, b:0-255) to hex string.
+
+        Uses OpenCV's LAB→BGR conversion for accurate color reproduction.
+        """
+        # OpenCV expects uint8 LAB in a 1x1x3 array
+        lab_pixel = np.array([[[
+            int(np.clip(lab[0], 0, 255)),
+            int(np.clip(lab[1], 0, 255)),
+            int(np.clip(lab[2], 0, 255))
+        ]]], dtype=np.uint8)
+        bgr = cv2.cvtColor(lab_pixel, cv2.COLOR_LAB2BGR)[0][0]
+        return f"#{int(bgr[2]):02x}{int(bgr[1]):02x}{int(bgr[0]):02x}"
 
     def get_team_colors_hex(self) -> Tuple[str, str]:
         """Return the auto-calibrated colors as hex strings for the frontend."""
         if not self._configured:
             return "#ff0000", "#0000ff"  # fallback
 
-        return self._hsv_to_hex(self.team0_color), self._hsv_to_hex(self.team1_color)
+        return self._lab_to_hex(self.team0_color), self._lab_to_hex(self.team1_color)
 
     # ------------------------------------------------------------------
-    # Public API: per-shot classification (unchanged from v1)
+    # Public API: per-shot classification (uses CIELAB pipeline)
     # ------------------------------------------------------------------
 
     def classify_from_bbox(
@@ -589,8 +642,7 @@ class StreamingTeamDetector:
                 center_x = (x1 + x2) / 2
                 bottom_y = y2
                 dist = np.sqrt(
-                    (center_x - shooter_pos['x'])**2 +
-                    (bottom_y - shooter_pos['y'])**2
+                    (center_x - shooter_pos['x'])**2 + (bottom_y - shooter_pos['y'])**2
                 )
 
                 if dist < best_dist:
