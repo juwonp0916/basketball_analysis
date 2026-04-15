@@ -44,3 +44,5 @@ score_detection/test_auto_calib.py
 test_streaming_shot_detector.py
 
 output_videos/
+
+src/debug_shot_frames
