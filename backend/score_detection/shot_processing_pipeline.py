@@ -39,8 +39,12 @@ class ShotProcessingPipeline:
     - Implements frame skipping when processing falls behind real-time
     """
 
-    # Skip threshold: if more than this many frames queued, start skipping
-    # Set to 10 for aggressive frame dropping to keep real-time performance
+    # Skip threshold: if more than this many frames queued, start skipping.
+    # Must be low enough that the pipeline stays near real-time — otherwise
+    # time-based detection logic (rim freshness, temporal voting, cooldowns)
+    # breaks because the pipeline processes increasingly stale frames.
+    # At 1080p on CPU, YOLO inference is ~2.2x slower than at 720p so the
+    # pipeline cannot sustain 30fps; aggressive skipping keeps it current.
     SKIP_THRESHOLD = 100000
 
     def __init__(

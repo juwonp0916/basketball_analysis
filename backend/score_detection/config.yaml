@@ -1,4 +1,4 @@
-weights_path: "weights/new_weight.pt"
+weights_path: "weights/260413_best.pt"
 
 classes: ["ball", "made", "person", "rim", "shoot"]
 
@@ -17,4 +17,4 @@ iou_threshold: 0.4
 screenshot_path: "screenshots"
 screenshot: False
 flask_port: 5555
-device: "cpu"
+device: "mps"

@@ -44,6 +44,7 @@
   let selectedShotId = $state<number | null>(null);
   let activeTab = $state<"all" | "team1" | "team2" | "comparison">("all");
   let eventLogFilter = $state<"all" | "team1" | "team2">("all");
+  let startTime = $state<number | null>(null);
 
   let globalStats = $state<GameStats>({
     totalShots: { made: 0, total: 0 },
@@ -105,8 +106,8 @@
     try {
       stream = await navigator.mediaDevices.getUserMedia({
         video: {
-          width:     { min: 1280, ideal: 1920 },
-          height:    { min: 720,  ideal: 1080 },
+          width: { min: 1280, ideal: 1920 },
+          height: { min: 720, ideal: 1080 },
           frameRate: { ideal: 30 },
         },
         audio: false,
@@ -136,7 +137,7 @@
     videoElement.playbackRate = playbackSpeed;
     isPaused = true;
     await videoElement.play();
-    stream = (videoElement as any).captureStream(30);  // 30 fps to match detection pipeline
+    stream = (videoElement as any).captureStream(30); // 30 fps to match detection pipeline
     videoElement.pause();
   }
 
@@ -204,8 +205,17 @@
     if (!isCalibrated) {
       enterCalibrationMode();
     } else {
+      logs = [];
+      shots = [];
+      selectedShotId = null;
       startAnalysisWebrtc();
     }
+  }
+
+  function getElapsedTime(rawTimestampMs: number): number {
+    console.log(rawTimestampMs, startTime);
+    if (startTime === null) return 0;
+    return Math.max(0, rawTimestampMs - startTime);
   }
 
   async function startAnalysisWebrtc() {
@@ -230,6 +240,7 @@
         },
         { backendUrl: BACKEND_URL, simulationMode, isCalibrated },
       );
+      startTime = Date.now();
       await session.start();
       if (videoElement?.paused) videoElement.play();
     } catch (error) {
@@ -679,7 +690,7 @@
                   {#if log.result === "made"}<Check class="w-4 h-4" />{:else}<X class="w-4 h-4" />{/if}
                 </div>
                 <div class="flex-1 flex items-center gap-2">
-                  <span class="text-gray-400 font-mono text-xs shrink-0">[{formatMs(log.timestamp_ms)}]</span>
+                  <span class="text-gray-400 font-mono text-xs shrink-0">[{formatMs(getElapsedTime(log.timestamp_ms))}]</span>
                   <span class="text-white font-medium text-sm">{log.type}</span>
                   <span class="text-gray-400 text-sm capitalize">{log.result}</span>
                   <span class="text-gray-600 text-sm hidden sm:inline-block truncate">- {log.location}</span>

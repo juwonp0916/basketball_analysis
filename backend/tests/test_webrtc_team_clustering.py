@@ -62,7 +62,7 @@ class WebRTCFrameRecorder:
         self._output_dir = output_dir or (Path(__file__).parent.parent / "output_videos")
         self._output_dir.mkdir(parents=True, exist_ok=True)
 
-        self._frames: list = []  # list of BGR ndarrays
+        self._frames: list = []  # list of (BGR ndarray, wall_clock_time)
         self._lock = threading.Lock()
         self._finalized = False
         self._last_logged_dims: Optional[Tuple[int, int]] = None  # track resolution changes
@@ -96,7 +96,7 @@ class WebRTCFrameRecorder:
                 )
                 self._last_logged_dims = dims
             # Store a copy so the caller can mutate/release the original
-            self._frames.append(bgr_frame.copy())
+            self._frames.append((bgr_frame.copy(), time.time()))
 
     @property
     def frame_count(self) -> int:
@@ -136,12 +136,16 @@ class WebRTCFrameRecorder:
             from team_detector import StreamingTeamDetector
             from ultralytics import YOLO
 
+            # Unpack (frame, timestamp) tuples
+            raw_frames = [f for f, _t in frames]
+            timestamps = [t for _f, t in frames]
+
             # ------- 0. Determine canonical resolution -------
             # WebRTC frames can change resolution mid-stream (browser adaptive
             # bitrate / renegotiation).  Pick the most common (width, height)
             # as the canonical size and resize outliers to match.
             dim_counts: dict = {}
-            for f in frames:
+            for f in raw_frames:
                 h, w = f.shape[:2]
                 key = (w, h)
                 dim_counts[key] = dim_counts.get(key, 0) + 1
@@ -152,15 +156,25 @@ class WebRTCFrameRecorder:
             if len(dim_counts) > 1:
                 logger.warning(
                     f"[WebRTCFrameRecorder] Detected {len(dim_counts)} distinct frame sizes "
-                    f"across {len(frames)} frames: {dim_counts}.  "
+                    f"across {len(raw_frames)} frames: {dim_counts}.  "
                     f"Using canonical {width}x{height} — resizing outliers."
                 )
             else:
                 logger.info(
-                    f"[WebRTCFrameRecorder] All {len(frames)} frames are {width}x{height}"
+                    f"[WebRTCFrameRecorder] All {len(raw_frames)} frames are {width}x{height}"
                 )
 
-            fps = 30.0
+            # Compute effective fps from wall-clock timestamps.
+            # With frame skipping the pipeline may process fewer frames than
+            # the source 30fps, so writing at 30fps would make playback too fast.
+            if len(timestamps) >= 2:
+                duration = timestamps[-1] - timestamps[0]
+                fps = (len(timestamps) - 1) / duration if duration > 0 else 30.0
+                # Clamp to reasonable range
+                fps = max(1.0, min(fps, 60.0))
+            else:
+                fps = 30.0
+            logger.info(f"[WebRTCFrameRecorder] Effective recording fps: {fps:.1f}")
 
             def ensure_size(img: np.ndarray) -> np.ndarray:
                 """Resize to canonical dims if needed (no-op for matching frames)."""
@@ -173,7 +187,7 @@ class WebRTCFrameRecorder:
             raw_path = self._output_dir / "webrtc_raw.mp4"
             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
             raw_writer = cv2.VideoWriter(str(raw_path), fourcc, fps, (width, height))
-            for f in frames:
+            for f in raw_frames:
                 raw_writer.write(ensure_size(f))
             raw_writer.release()
             logger.info(f"[WebRTCFrameRecorder] Raw video saved: {raw_path}")
@@ -193,12 +207,12 @@ class WebRTCFrameRecorder:
             teams_path = self._output_dir / "webrtc_teams.mp4"
             teams_writer = cv2.VideoWriter(str(teams_path), fourcc, fps, (width, height))
 
-            for frame_idx, frame in enumerate(frames):
+            for frame_idx, frame in enumerate(raw_frames):
                 frame = ensure_size(frame)
                 vis = frame.copy()
 
                 if frame_idx % 30 == 0:
-                    logger.info(f"[WebRTCFrameRecorder] Processing frame {frame_idx}/{len(frames)}...")
+                    logger.info(f"[WebRTCFrameRecorder] Processing frame {frame_idx}/{len(raw_frames)}...")
 
                 if not team_detector.is_configured:
                     team_detector.auto_calibrate(frame, model, class_names, inference_dims, device)

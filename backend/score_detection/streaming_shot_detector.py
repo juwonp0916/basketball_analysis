@@ -66,6 +66,10 @@ class DetectorState:
     # yet moved far.  We store this immediately so the later confirmation step
     # (when the ball exits the rim) uses the right player's foot position.
     fallback_candidate_pos: Any = None
+    # Frame captured at the same time as fallback_candidate_pos — used for
+    # team classification so the correct player (not a later passer-by) is
+    # matched to the shooter position.
+    fallback_candidate_frame: Any = None
 
     shot_id_counter: int = 0
     last_frame: Any = None  # Most recent frame for fallback person detection
@@ -120,7 +124,7 @@ class StreamingShotDetector:
         MIN_INFERENCE_WIDTH = 640
         raw_w = max(MIN_INFERENCE_WIDTH, int(frame_width * 0.5))
         raw_h = max(int(MIN_INFERENCE_WIDTH * frame_height / frame_width), int(frame_height * 0.5))
-        self.inference_width  = ((raw_w + 31) // 32) * 32
+        self.inference_width = ((raw_w + 31) // 32) * 32
         self.inference_height = ((raw_h + 31) // 32) * 32
 
         # Timing constants (based on frame rate) - reduced to avoid blocking legitimate shots
@@ -214,7 +218,7 @@ class StreamingShotDetector:
         MIN_INFERENCE_WIDTH = 640
         raw_w = max(MIN_INFERENCE_WIDTH, int(self.width * 0.5))
         raw_h = max(int(MIN_INFERENCE_WIDTH * self.height / self.width), int(self.height * 0.5))
-        self.inference_width  = ((raw_w + 31) // 32) * 32
+        self.inference_width = ((raw_w + 31) // 32) * 32
         self.inference_height = ((raw_h + 31) // 32) * 32
 
         try:
@@ -275,11 +279,11 @@ class StreamingShotDetector:
 
         # Skip every other frame for CPU performance (process only odd frames)
         # This is in addition to pipeline-level skipping
-        if sequence_id % 2 != 0:
-            # Still decrement cooldown even on skipped frames
-            if self.state.attempt_cooldown > 0:
-                self.state.attempt_cooldown -= 1
-            return None
+        # if sequence_id % 2 != 0:
+        #     # Still decrement cooldown even on skipped frames
+        #     if self.state.attempt_cooldown > 0:
+        #         self.state.attempt_cooldown -= 1
+        #     return None
 
         # Resize frame for inference
         det_frame = cv2.resize(frame, (self.inference_width, self.inference_height))
@@ -406,7 +410,7 @@ class StreamingShotDetector:
                     num_detections = len(self.state.recent_shoot_detections)
 
                     logger.debug(f"[Temporal] Shoot detected: conf={conf:.2f}, "
-                               f"window detections={num_detections}/{self.MIN_SHOOT_DETECTIONS}")
+                                 f"window detections={num_detections}/{self.MIN_SHOOT_DETECTIONS}")
 
                     # Only trigger if threshold met (multi-frame voting)
                     if num_detections >= self.MIN_SHOOT_DETECTIONS:
@@ -679,9 +683,9 @@ class StreamingShotDetector:
         # In image coordinates: y increases downward, so negative dy = upward motion
         velocities = []
         for i in range(1, len(recent_balls)):
-            pos_prev = recent_balls[i-1][0]
+            pos_prev = recent_balls[i - 1][0]
             pos_curr = recent_balls[i][0]
-            frame_prev = recent_balls[i-1][1]
+            frame_prev = recent_balls[i - 1][1]
             frame_curr = recent_balls[i][1]
 
             # Calculate dy (positive = downward, negative = upward)
@@ -701,7 +705,7 @@ class StreamingShotDetector:
         is_valid = upward_ratio >= self.MIN_UPWARD_RATIO
 
         logger.info(f"[Trajectory] Frames: {len(recent_balls)}, Upward: {upward_count}/{len(velocities)} "
-                   f"({upward_ratio:.1%}), Threshold: {self.MIN_UPWARD_RATIO:.1%}, Valid: {is_valid}")
+                    f"({upward_ratio:.1%}), Threshold: {self.MIN_UPWARD_RATIO:.1%}, Valid: {is_valid}")
 
         return is_valid
 
@@ -727,7 +731,7 @@ class StreamingShotDetector:
         # Process accumulated shot group when enough time has passed
         if (self.state.attempt_cooldown == 0 and
             len(self.state.pending_shot_group) > 0 and
-            frames_since_last_detection > self.DEDUPLICATION_FRAME_THRESHOLD):
+                frames_since_last_detection > self.DEDUPLICATION_FRAME_THRESHOLD):
 
             representative_shot = self._deduplicate_shot_group(
                 self.state.pending_shot_group
@@ -830,7 +834,7 @@ class StreamingShotDetector:
 
         if (sequence_id - self.state.rim_last_detected >= self.frame_rate or
             not ball_detected or
-            self.state.attempt_cooldown != 0):
+                self.state.attempt_cooldown != 0):
             return None
 
         if in_score_region(self.state.ball_pos, self.state.hoop_pos):
@@ -848,6 +852,7 @@ class StreamingShotDetector:
                     self.state.fallback_candidate_pos = self._find_nearest_person_to_ball(
                         self.state.last_frame
                     )
+                    self.state.fallback_candidate_frame = self.state.last_frame
                     logger.info(
                         f"[FALLBACK] Captured shooter candidate at ball-enters-rim: "
                         f"{self.state.fallback_candidate_pos}"
@@ -870,6 +875,7 @@ class StreamingShotDetector:
                 # Use the shooter candidate captured when the ball first entered the
                 # score region (much closer to release time than the current frame).
                 shooter_pos = self.state.fallback_candidate_pos
+                shooter_frame = self.state.fallback_candidate_frame
 
                 # Reset state regardless of whether we can localise
                 self.state.attempt_cooldown = self.MADE_ATTEMPT_COOLDOWN
@@ -877,6 +883,7 @@ class StreamingShotDetector:
                 self.state.ball_entered = False
                 self.state.attempt_time = 0
                 self.state.fallback_candidate_pos = None
+                self.state.fallback_candidate_frame = None
                 if len(self.state.pending_shot_group) > 0:
                     self.state.pending_shot_group = []
 
@@ -887,7 +894,8 @@ class StreamingShotDetector:
                 shot_data = {
                     'frame': sequence_id,
                     'timestamp': timestamp_ms,
-                    'shooter_position': shooter_pos
+                    'shooter_position': shooter_pos,
+                    'detection_frame': shooter_frame,
                 }
                 shot_event = self._create_shot_event(shot_data, True, sequence_id)
                 self._add_to_recent_shots(shot_data, sequence_id)
@@ -904,6 +912,7 @@ class StreamingShotDetector:
                 # Use the shooter candidate captured when the ball first entered the
                 # score region (much closer to release time than the current frame).
                 shooter_pos = self.state.fallback_candidate_pos
+                shooter_frame = self.state.fallback_candidate_frame
 
                 # Reset state regardless of whether we can localise
                 self.state.attempt_cooldown = self.MISS_ATTEMPT_COOLDOWN
@@ -911,6 +920,7 @@ class StreamingShotDetector:
                 self.state.ball_entered = False
                 self.state.last_point_in_region = None
                 self.state.fallback_candidate_pos = None
+                self.state.fallback_candidate_frame = None
                 if len(self.state.pending_shot_group) > 0:
                     self.state.pending_shot_group = []
 
@@ -921,7 +931,8 @@ class StreamingShotDetector:
                 shot_data = {
                     'frame': sequence_id,
                     'timestamp': timestamp_ms,
-                    'shooter_position': shooter_pos
+                    'shooter_position': shooter_pos,
+                    'detection_frame': shooter_frame,
                 }
                 shot_event = self._create_shot_event(shot_data, False, sequence_id)
                 self._add_to_recent_shots(shot_data, sequence_id)
@@ -981,13 +992,18 @@ class StreamingShotDetector:
             )
 
         # Team detection (only if configured and we have shooter position)
+        # Use the frame captured at shot-detection time (stored in shot_data) so
+        # that team classification sees the same player layout as when the shooter
+        # position was determined.  Fall back to the latest frame only if the
+        # detection-time frame was not stored (legacy primary path entries).
         team_id = None
         team_confidence = 0.0
-        logger.info(f"Team detection check: configured={self.team_detector.is_configured}, shooter_pos={shooter_pos is not None}, frame={self.state.last_frame is not None}")
-        if self.team_detector.is_configured and shooter_pos and self.state.last_frame is not None:
+        team_frame = shot_data.get('detection_frame', self.state.last_frame)
+        logger.info(f"Team detection check: configured={self.team_detector.is_configured}, shooter_pos={shooter_pos is not None}, frame={'detection_frame' if shot_data.get('detection_frame') is not None else 'last_frame'}")
+        if self.team_detector.is_configured and shooter_pos and team_frame is not None:
             try:
                 team_id, team_confidence, bbox = self.team_detector.classify_from_position(
-                    frame=self.state.last_frame,
+                    frame=team_frame,
                     shooter_pos=shooter_pos,
                     model=self.model,
                     class_names=self.class_names,
@@ -999,7 +1015,7 @@ class StreamingShotDetector:
             except Exception as e:
                 logger.exception(f"Team detection failed: {e}")
         else:
-            logger.warning(f"Team detection skipped: configured={self.team_detector.is_configured}, shooter_pos={shooter_pos}, frame_exists={self.state.last_frame is not None}")
+            logger.warning(f"Team detection skipped: configured={self.team_detector.is_configured}, shooter_pos={shooter_pos}, frame_exists={team_frame is not None}")
 
         event = ShotEvent(
             shot_id=self.state.shot_id_counter,
@@ -1042,7 +1058,7 @@ class StreamingShotDetector:
                 pos_dist = np.sqrt((p1['x'] - p2['x'])**2 + (p1['y'] - p2['y'])**2)
 
             if (frame_dist <= self.DEDUPLICATION_FRAME_THRESHOLD and
-                pos_dist <= self.DEDUPLICATION_POSITION_THRESHOLD):
+                    pos_dist <= self.DEDUPLICATION_POSITION_THRESHOLD):
                 current_subgroup.append(current)
             else:
                 subgroups.append(current_subgroup)
