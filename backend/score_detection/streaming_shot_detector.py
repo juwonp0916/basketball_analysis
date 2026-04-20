@@ -70,6 +70,9 @@ class DetectorState:
     # team classification so the correct player (not a later passer-by) is
     # matched to the shooter position.
     fallback_candidate_frame: Any = None
+    # Person detections captured alongside fallback_candidate_pos — used for
+    # team classification without re-running YOLO.
+    fallback_candidate_persons: Any = None
 
     shot_id_counter: int = 0
     last_frame: Any = None  # Most recent frame for fallback person detection
@@ -288,12 +291,15 @@ class StreamingShotDetector:
         # Resize frame for inference
         det_frame = cv2.resize(frame, (self.inference_width, self.inference_height))
 
-        # Maintain a small rolling frame buffer for re-inference when
-        # a shot is detected but shooter position is missing
-        # Reduced buffer size from 30 to 15 to save memory
-        self.state.frame_history.append((det_frame, sequence_id, timestamp_ms))
+        # Maintain a small rolling frame buffer with YOLO metadata for
+        # re-inference avoidance when a shot is detected.
+        # Stores (det_frame, sequence_id, timestamp_ms, person_detections, all_boxes)
+        # person_detections and all_boxes are populated after YOLO runs below.
+        frame_entry_idx = len(self.state.frame_history)
+        self.state.frame_history.append((det_frame, sequence_id, timestamp_ms, None, None))
         if len(self.state.frame_history) > 15:
             self.state.frame_history.pop(0)
+            frame_entry_idx = len(self.state.frame_history) - 1
 
         # Run ball/rim detection with CPU optimizations
         results = self.model(
@@ -309,22 +315,19 @@ class StreamingShotDetector:
 
         ball_detected = False
         rim_detected = False
+        person_detections = []  # Collect person bboxes from this YOLO pass
 
         for r in results:
             boxes = sorted(
-                [(box.xyxy[0], box.conf, box.cls) for box in r.boxes],
+                [(box.xyxy[0], box.conf, box.cls, box.id) for box in r.boxes],
                 key=lambda x: -x[1]
             )
 
             for box in boxes:
-                if ball_detected and rim_detected:
-                    break
-
-                x1, y1, x2, y2 = box[0]
-                x1 = int(x1 * self.width / self.inference_width)
-                y1 = int(y1 * self.height / self.inference_height)
-                x2 = int(x2 * self.width / self.inference_width)
-                y2 = int(y2 * self.height / self.inference_height)
+                x1 = int(box[0][0] * self.width / self.inference_width)
+                y1 = int(box[0][1] * self.height / self.inference_height)
+                x2 = int(box[0][2] * self.width / self.inference_width)
+                y2 = int(box[0][3] * self.height / self.inference_height)
                 w, h = x2 - x1, y2 - y1
 
                 conf = float(box[1])
@@ -341,13 +344,29 @@ class StreamingShotDetector:
                     elif current_class == 'ball' and not ball_detected:
                         ball_detected = True
                         self.state.ball_pos.append((center, sequence_id, w, h, conf))
+                    elif current_class == 'person':
+                        track_id = int(box[3][0]) if box[3] is not None else None
+                        person_detections.append({
+                            'bbox': (x1, y1, x2, y2),
+                            'conf': conf,
+                            'track_id': track_id,
+                        })
 
         # Run shoot detection every 5 frames for CPU performance
         # Ball/rim tracking runs every frame (faster and more critical)
         shoot_detected = False
         if sequence_id % 5 == 0:
             shoot_detected = self._detect_shoot_class(
-                det_frame, timestamp_ms, sequence_id
+                det_frame, timestamp_ms, sequence_id, person_detections
+            )
+
+        # Update frame_history entry with collected person detections
+        # (shoot detection may have produced richer metadata via all_boxes)
+        entry = self.state.frame_history[frame_entry_idx]
+        if entry[3] is None:
+            # Update with person detections from main pass
+            self.state.frame_history[frame_entry_idx] = (
+                entry[0], entry[1], entry[2], person_detections, entry[4]
             )
 
         # Clean detection history
@@ -368,9 +387,10 @@ class StreamingShotDetector:
         self,
         det_frame: np.ndarray,
         timestamp_ms: int,
-        sequence_id: int
+        sequence_id: int,
+        existing_person_detections: List[Dict] = None
     ) -> bool:
-        """Detect shoot class and shooter position"""
+        """Detect shoot class and shooter position, collecting person detections."""
         results_shoot = self.model(
             det_frame,
             stream=True,
@@ -384,11 +404,40 @@ class StreamingShotDetector:
 
         shoot_detected = False
 
+        # Collect person detections from the shoot pass (richer: lower conf, more detections)
+        shoot_pass_persons = []
+
         for r in results_shoot:
             boxes_shoot = sorted(
-                [(box.xyxy[0], box.conf, box.cls) for box in r.boxes],
+                [(box.xyxy[0], box.conf, box.cls, box.id) for box in r.boxes],
                 key=lambda x: -x[1]
             )
+
+            # Extract all person bboxes from this pass
+            for box in boxes_shoot:
+                cls = int(box[2])
+                if self.class_names[cls] == 'person' and float(box[1]) >= 0.3:
+                    x1_p = int(box[0][0] * self.width / self.inference_width)
+                    y1_p = int(box[0][1] * self.height / self.inference_height)
+                    x2_p = int(box[0][2] * self.width / self.inference_width)
+                    y2_p = int(box[0][3] * self.height / self.inference_height)
+                    track_id = int(box[3][0]) if box[3] is not None else None
+                    shoot_pass_persons.append({
+                        'bbox': (x1_p, y1_p, x2_p, y2_p),
+                        'conf': float(box[1]),
+                        'track_id': track_id,
+                    })
+
+            # Update frame_history entry with richer shoot-pass person detections
+            for i in range(len(self.state.frame_history) - 1, -1, -1):
+                entry = self.state.frame_history[i]
+                if entry[1] == sequence_id:
+                    self.state.frame_history[i] = (
+                        entry[0], entry[1], entry[2],
+                        shoot_pass_persons if shoot_pass_persons else entry[3],
+                        boxes_shoot,  # Store all raw boxes for _reinfer_shooter
+                    )
+                    break
 
             for box in boxes_shoot:
                 conf = float(box[1])
@@ -442,9 +491,10 @@ class StreamingShotDetector:
                                 'shoot_confidence': conf,
                                 'shooter_position': shooter_position,
                                 'temporal_detections': num_detections,
-                                # Store the full-res frame at detection time for debug saving.
-                                # This is the frame that still has ball + shooter visible.
+                                # Store the full-res frame at detection time for team color extraction.
                                 'detection_frame': self.state.last_frame,
+                                # Pre-computed person bounding boxes — avoids re-running YOLO for team detection.
+                                'person_detections': shoot_pass_persons if shoot_pass_persons else existing_person_detections,
                             }
                             self.state.shoot_pos.append(shot_data)
                             self.state.pending_shot_group.append(shot_data)
@@ -515,41 +565,43 @@ class StreamingShotDetector:
     def _find_nearest_person_to_ball(
         self,
         frame: np.ndarray
-    ) -> Optional[Dict[str, float]]:
+    ) -> Tuple[Optional[Dict[str, float]], List[Dict]]:
         """
-        Find the shooter by scanning the current frame first, then falling back
-        to recent frame history if the current-frame match is poor.
+        Find the shooter by scanning cached person detections first, then falling back
+        to recent frame history metadata. Only runs YOLO inference as a last resort
+        if no cached metadata is available.
 
-        For 3PT shots the ball travels far from the shooter before reaching the
-        rim. The current frame (ball at rim) may return a defender or bystander
-        as the "nearest" person.  Scanning history with the ball position at each
-        historical moment finds the frame where someone was holding/just-released
-        the ball — i.e. the smallest ball-to-person distance — which is the shooter.
-
-        Strategy:
-          1. Run inference on the current frame; record the nearest person + distance.
-          2. If that distance is below CLOSE_MATCH_PX, return immediately (no history needed).
-          3. Otherwise scan up to MAX_HISTORY_FRAMES recent frames.  For each, use the
-             ball position recorded at that frame's sequence_id (falling back to the
-             nearest-in-time ball entry).  The frame with the globally smallest
-             ball-to-person distance wins — that is most likely the release frame.
+        Returns:
+            Tuple of (shooter_position_dict, person_detections_used)
         """
         if len(self.state.ball_pos) == 0:
-            return None
+            return None, []
 
-        CLOSE_MATCH_PX = 250   # if current frame already has someone this close, stop
-        MAX_HISTORY_FRAMES = 8  # cap to limit extra inference cost
+        CLOSE_MATCH_PX = 250
 
-        # Build lookup: sequence_id → ball center from recorded history
-        ball_by_seq = {entry[1]: entry[0] for entry in self.state.ball_pos}
+        def _find_nearest_from_detections(person_dets, ball_center):
+            """Return (best_person_dict, best_dist) from pre-computed person detections."""
+            bp = None
+            bd = float('inf')
+            for det in person_dets:
+                x1, y1, x2, y2 = det['bbox']
+                pcx = (x1 + x2) / 2
+                pcy = (y1 + y2) / 2
+                dist = math.sqrt((ball_center[0] - pcx) ** 2 +
+                                 (ball_center[1] - pcy) ** 2)
+                if dist < bd:
+                    bd = dist
+                    bp = {'x': pcx, 'y': float(y2)}
+            return bp, bd
 
         def _run_inference_on(det_frame, ball_center):
-            """Return (best_person_dict, best_dist) for one frame."""
+            """Fallback: run YOLO inference on a frame. Returns (best_person_dict, best_dist, person_dets)."""
             results = self.model(det_frame, stream=True, verbose=False,
                                  imgsz=self.inference_width, device=self.device,
                                  conf=0.25, max_det=10)
             bp = None
             bd = float('inf')
+            person_dets = []
             for r in results:
                 for box in r.boxes:
                     if self.class_names[int(box.cls[0])] != 'person':
@@ -561,6 +613,12 @@ class StreamingShotDetector:
                     y1 = int(coords[1] * self.height / self.inference_height)
                     x2 = int(coords[2] * self.width / self.inference_width)
                     y2 = int(coords[3] * self.height / self.inference_height)
+                    track_id = int(box.id[0]) if box.id is not None else None
+                    person_dets.append({
+                        'bbox': (x1, y1, x2, y2),
+                        'conf': float(box.conf[0]),
+                        'track_id': track_id,
+                    })
                     pcx = (x1 + x2) / 2
                     pcy = (y1 + y2) / 2
                     dist = math.sqrt((ball_center[0] - pcx) ** 2 +
@@ -568,73 +626,82 @@ class StreamingShotDetector:
                     if dist < bd:
                         bd = dist
                         bp = {'x': pcx, 'y': float(y2)}
-            return bp, bd
+            return bp, bd, person_dets
 
-        # ── Step 1: current frame ────────────────────────────────────────────────
+        # Build lookup: sequence_id -> ball center from recorded history
+        ball_by_seq = {entry[1]: entry[0] for entry in self.state.ball_pos}
+
         current_ball = self.state.ball_pos[-1][0]
-        det_frame = cv2.resize(frame, (self.inference_width, self.inference_height))
-        best_person, best_dist = _run_inference_on(det_frame, current_ball)
+        best_person = None
+        best_dist = float('inf')
+        best_person_dets = []
 
-        logger.debug(f"[NEAREST] current frame: ball={current_ball}, dist={best_dist:.1f}px")
+        # Step 1: Try the most recent frame_history entry's cached person detections
+        if self.state.frame_history:
+            latest = self.state.frame_history[-1]
+            cached_persons = latest[3]  # person_detections
+            if cached_persons:
+                best_person, best_dist = _find_nearest_from_detections(cached_persons, current_ball)
+                best_person_dets = cached_persons
+                if best_dist <= CLOSE_MATCH_PX:
+                    return best_person, best_person_dets
 
-        if best_dist <= CLOSE_MATCH_PX:
-            return best_person
-
-        # ── Step 2: scan frame history ───────────────────────────────────────────
-        # Iterate from most-recent to oldest so we find the release frame quickly.
+        # Step 2: Scan frame history cached metadata
+        MAX_HISTORY_FRAMES = 8
         history_frames = self.state.frame_history[-MAX_HISTORY_FRAMES:]
-        for hist_frame, seq_id, _ts in reversed(history_frames):
+        for entry in reversed(history_frames):
+            det_frame, seq_id, _ts, cached_persons, _all_boxes = entry
+            if not cached_persons:
+                continue
+
             # Use ball position at this historical moment if available
             if seq_id in ball_by_seq:
                 hist_ball = ball_by_seq[seq_id]
             else:
-                # Fall back to closest recorded ball position by seq_id
                 closest = min(self.state.ball_pos,
                               key=lambda b: abs(b[1] - seq_id), default=None)
                 hist_ball = closest[0] if closest else current_ball
 
-            candidate, dist = _run_inference_on(hist_frame, hist_ball)
-            logger.debug(f"[NEAREST] history seq={seq_id}: ball={hist_ball}, dist={dist:.1f}px")
+            candidate, dist = _find_nearest_from_detections(cached_persons, hist_ball)
 
             if dist < best_dist:
                 best_dist = dist
                 best_person = candidate
+                best_person_dets = cached_persons
 
-            # Stop early if we've found a very close match
             if best_dist <= CLOSE_MATCH_PX:
                 break
 
+        # Step 3: Fallback to YOLO inference if no cached metadata had a good match
+        if best_dist > CLOSE_MATCH_PX:
+            det_frame = cv2.resize(frame, (self.inference_width, self.inference_height))
+            candidate, dist, person_dets = _run_inference_on(det_frame, current_ball)
+            if dist < best_dist:
+                best_dist = dist
+                best_person = candidate
+                best_person_dets = person_dets
+
         logger.debug(f"[NEAREST] final: dist={best_dist:.1f}px, person={best_person}")
-        return best_person
+        return best_person, best_person_dets
 
     def _reinfer_shooter_from_history(self) -> Optional[Dict[str, float]]:
         """
-        Scan recent frame history to find the shooter position.
-
-        Mirrors the video detector's _process_shot_detection: re-runs the shoot
-        model on stored frames to find a 'shoot' class detection, then matches
-        to a person box to get foot position.
-
-        Only checks the 10 most recent frames to avoid blocking the pipeline.
+        Scan recent frame history to find the shooter position using cached
+        YOLO metadata. Falls back to YOLO inference only if no cached metadata
+        contains a shoot-class detection.
         """
-        # Limit to last 5 frames to keep latency reasonable (reduced from 10)
         frames_to_check = self.state.frame_history[-5:]
-        for det_frame, seq_id, ts in reversed(frames_to_check):
-            try:
-                results_shoot = self.model(
-                    det_frame, stream=True, verbose=False,
-                    imgsz=self.inference_width, device=self.device,
-                    conf=0.1, max_det=15
-                )
-                for r in results_shoot:
-                    boxes_shoot = sorted(
-                        [(box.xyxy[0], box.conf, box.cls) for box in r.boxes],
-                        key=lambda x: -x[1]
-                    )
+        for entry in reversed(frames_to_check):
+            det_frame, seq_id, ts, person_dets, all_boxes = entry
+
+            # Try cached all_boxes first (from shoot detection pass)
+            if all_boxes is not None:
+                try:
+                    boxes_shoot = all_boxes
                     for box in boxes_shoot:
                         conf = float(box[1])
                         cls = int(box[2])
-                        if self.class_names[cls] == 'shoot' and conf > 0.15:  # Lowered to match main detection threshold
+                        if self.class_names[cls] == 'shoot' and conf > 0.15:
                             x1 = int(box[0][0] * self.width / self.inference_width)
                             y1 = int(box[0][1] * self.height / self.inference_height)
                             x2 = int(box[0][2] * self.width / self.inference_width)
@@ -644,8 +711,36 @@ class StreamingShotDetector:
                             )
                             if pos:
                                 return pos
-            except Exception:
-                continue
+                except Exception:
+                    continue
+            else:
+                # Fallback: run YOLO inference on this frame
+                try:
+                    results_shoot = self.model(
+                        det_frame, stream=True, verbose=False,
+                        imgsz=self.inference_width, device=self.device,
+                        conf=0.1, max_det=15
+                    )
+                    for r in results_shoot:
+                        boxes_shoot = sorted(
+                            [(box.xyxy[0], box.conf, box.cls, box.id) for box in r.boxes],
+                            key=lambda x: -x[1]
+                        )
+                        for box in boxes_shoot:
+                            conf = float(box[1])
+                            cls = int(box[2])
+                            if self.class_names[cls] == 'shoot' and conf > 0.15:
+                                x1 = int(box[0][0] * self.width / self.inference_width)
+                                y1 = int(box[0][1] * self.height / self.inference_height)
+                                x2 = int(box[0][2] * self.width / self.inference_width)
+                                y2 = int(box[0][3] * self.height / self.inference_height)
+                                pos = self._find_shooter_position(
+                                    boxes_shoot, (x1, y1, x2, y2)
+                                )
+                                if pos:
+                                    return pos
+                except Exception:
+                    continue
         return None
 
     def _validate_ball_trajectory(self, sequence_id: int) -> bool:
@@ -747,9 +842,11 @@ class StreamingShotDetector:
                     else:
                         # Last resort: IoU on the current frame
                         if self.state.last_frame is not None:
-                            fallback_pos = self._find_nearest_person_to_ball(self.state.last_frame)
+                            fallback_pos, fallback_persons = self._find_nearest_person_to_ball(self.state.last_frame)
                             if fallback_pos:
                                 representative_shot['shooter_position'] = fallback_pos
+                                if not representative_shot.get('person_detections'):
+                                    representative_shot['person_detections'] = fallback_persons
                     if not representative_shot.get('shooter_position'):
                         self.state.pending_shot_group = []
                         return None
@@ -849,10 +946,12 @@ class StreamingShotDetector:
                 # wait until the ball is confirmed in/out of the net (by which time
                 # the shooter has run down the court).
                 if self.state.last_frame is not None:
-                    self.state.fallback_candidate_pos = self._find_nearest_person_to_ball(
+                    pos, persons = self._find_nearest_person_to_ball(
                         self.state.last_frame
                     )
+                    self.state.fallback_candidate_pos = pos
                     self.state.fallback_candidate_frame = self.state.last_frame
+                    self.state.fallback_candidate_persons = persons
                     logger.info(
                         f"[FALLBACK] Captured shooter candidate at ball-enters-rim: "
                         f"{self.state.fallback_candidate_pos}"
@@ -876,6 +975,7 @@ class StreamingShotDetector:
                 # score region (much closer to release time than the current frame).
                 shooter_pos = self.state.fallback_candidate_pos
                 shooter_frame = self.state.fallback_candidate_frame
+                shooter_persons = self.state.fallback_candidate_persons
 
                 # Reset state regardless of whether we can localise
                 self.state.attempt_cooldown = self.MADE_ATTEMPT_COOLDOWN
@@ -884,6 +984,7 @@ class StreamingShotDetector:
                 self.state.attempt_time = 0
                 self.state.fallback_candidate_pos = None
                 self.state.fallback_candidate_frame = None
+                self.state.fallback_candidate_persons = None
                 if len(self.state.pending_shot_group) > 0:
                     self.state.pending_shot_group = []
 
@@ -896,6 +997,7 @@ class StreamingShotDetector:
                     'timestamp': timestamp_ms,
                     'shooter_position': shooter_pos,
                     'detection_frame': shooter_frame,
+                    'person_detections': shooter_persons,
                 }
                 shot_event = self._create_shot_event(shot_data, True, sequence_id)
                 self._add_to_recent_shots(shot_data, sequence_id)
@@ -913,6 +1015,7 @@ class StreamingShotDetector:
                 # score region (much closer to release time than the current frame).
                 shooter_pos = self.state.fallback_candidate_pos
                 shooter_frame = self.state.fallback_candidate_frame
+                shooter_persons = self.state.fallback_candidate_persons
 
                 # Reset state regardless of whether we can localise
                 self.state.attempt_cooldown = self.MISS_ATTEMPT_COOLDOWN
@@ -921,6 +1024,7 @@ class StreamingShotDetector:
                 self.state.last_point_in_region = None
                 self.state.fallback_candidate_pos = None
                 self.state.fallback_candidate_frame = None
+                self.state.fallback_candidate_persons = None
                 if len(self.state.pending_shot_group) > 0:
                     self.state.pending_shot_group = []
 
@@ -933,6 +1037,7 @@ class StreamingShotDetector:
                     'timestamp': timestamp_ms,
                     'shooter_position': shooter_pos,
                     'detection_frame': shooter_frame,
+                    'person_detections': shooter_persons,
                 }
                 shot_event = self._create_shot_event(shot_data, False, sequence_id)
                 self._add_to_recent_shots(shot_data, sequence_id)
@@ -992,30 +1097,43 @@ class StreamingShotDetector:
             )
 
         # Team detection (only if configured and we have shooter position)
-        # Use the frame captured at shot-detection time (stored in shot_data) so
-        # that team classification sees the same player layout as when the shooter
-        # position was determined.  Fall back to the latest frame only if the
-        # detection-time frame was not stored (legacy primary path entries).
+        # Use cached person detections to avoid re-running YOLO inference.
+        # Fall back to classify_from_position (with YOLO) only if no cached data.
         team_id = None
         team_confidence = 0.0
         team_frame = shot_data.get('detection_frame', self.state.last_frame)
-        logger.info(f"Team detection check: configured={self.team_detector.is_configured}, shooter_pos={shooter_pos is not None}, frame={'detection_frame' if shot_data.get('detection_frame') is not None else 'last_frame'}")
+        person_detections = shot_data.get('person_detections')
+        logger.info(f"Team detection check: configured={self.team_detector.is_configured}, shooter_pos={shooter_pos is not None}, cached_persons={person_detections is not None}")
         if self.team_detector.is_configured and shooter_pos and team_frame is not None:
             try:
-                team_id, team_confidence, bbox = self.team_detector.classify_from_position(
-                    frame=team_frame,
-                    shooter_pos=shooter_pos,
-                    model=self.model,
-                    class_names=self.class_names,
-                    inference_dims=(self.inference_width, self.inference_height),
-                    frame_dims=(self.width, self.height),
-                    device=self.device
-                )
+                if person_detections:
+                    # Use cached person detections — no YOLO re-run needed
+                    team_id, team_confidence, bbox = self.team_detector.classify_from_cached_detections(
+                        frame=team_frame,
+                        shooter_pos=shooter_pos,
+                        person_detections=person_detections,
+                    )
+                else:
+                    # Fallback: re-run YOLO (should be rare)
+                    team_id, team_confidence, bbox = self.team_detector.classify_from_position(
+                        frame=team_frame,
+                        shooter_pos=shooter_pos,
+                        model=self.model,
+                        class_names=self.class_names,
+                        inference_dims=(self.inference_width, self.inference_height),
+                        frame_dims=(self.width, self.height),
+                        device=self.device
+                    )
                 logger.info(f"Team detection result: team_id={team_id}, confidence={team_confidence:.2f}, bbox={bbox}")
             except Exception as e:
                 logger.exception(f"Team detection failed: {e}")
         else:
             logger.warning(f"Team detection skipped: configured={self.team_detector.is_configured}, shooter_pos={shooter_pos}, frame_exists={team_frame is not None}")
+
+        # Memory cleanup: discard detection frame and cached metadata now that
+        # team classification is done.  This prevents stale full-res frames
+        # from accumulating in memory.
+        shot_data.pop('person_detections', None)
 
         event = ShotEvent(
             shot_id=self.state.shot_id_counter,

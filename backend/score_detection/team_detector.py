@@ -590,6 +590,52 @@ class StreamingTeamDetector:
 
         return final_team, confidence
 
+    def classify_from_cached_detections(
+        self,
+        frame: np.ndarray,
+        shooter_pos: dict,
+        person_detections: List[Dict],
+    ) -> Tuple[Optional[int], float, Optional[Tuple[int, int, int, int]]]:
+        """
+        Finds the player closest to the shooter position using pre-computed
+        person bounding boxes (from a prior YOLO pass), then classifies their team.
+
+        This avoids re-running YOLO inference for team detection.
+
+        Args:
+            frame: The original BGR frame (needed for jersey color extraction).
+            shooter_pos: {'x': float, 'y': float} — shooter foot position.
+            person_detections: List of dicts with keys 'bbox' (x1,y1,x2,y2),
+                               'conf' (float), 'track_id' (int|None).
+        """
+        if not self._configured:
+            return None, 0.0, None
+
+        best_bbox = None
+        best_dist = float('inf')
+        best_track_id = None
+
+        for det in person_detections:
+            x1, y1, x2, y2 = det['bbox']
+            center_x = (x1 + x2) / 2
+            bottom_y = y2
+            dist = np.sqrt(
+                (center_x - shooter_pos['x'])**2 + (bottom_y - shooter_pos['y'])**2
+            )
+
+            if dist < best_dist:
+                best_dist = dist
+                best_bbox = (x1, y1, x2, y2)
+                best_track_id = det.get('track_id')
+
+        if best_bbox is None:
+            return None, 0.0, None
+
+        team_id, confidence = self.classify_from_bbox(
+            frame, best_bbox, track_id=best_track_id
+        )
+        return team_id, confidence, best_bbox
+
     def classify_from_position(
         self,
         frame: np.ndarray,

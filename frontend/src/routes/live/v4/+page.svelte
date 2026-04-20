@@ -238,7 +238,7 @@
             teamsConfigured = true;
           },
         },
-        { backendUrl: BACKEND_URL, simulationMode, isCalibrated },
+        { backendUrl: BACKEND_URL, isCalibrated },
       );
       startTime = Date.now();
       await session.start();
@@ -288,7 +288,7 @@
   });
 
   let isRecording = $state(false);
-  let recordingDuration = $state("00:12:45");
+
 </script>
 
 <!-- The template remains the same structure but with extracted components -->
@@ -414,13 +414,13 @@
                 <div class="w-4 h-4 bg-red-500 rounded-full {isRecording ? 'animate-pulse' : ''}"></div>
               </div>
               <div>
-                <h3 class="font-bold text-white">{simulationMode ? "Simulation Mode" : "Recording in Progress"}</h3>
+                <h3 class="font-bold text-white">{simulationMode ? "Simulation Mode" : "Live Camera"}</h3>
                 <p class="text-sm text-gray-400">
-                  {#if simulationMode && !isCalibrated}Calibration required
-                  {:else if simulationMode && isCalibrated}Ready for analysis {teamsConfigured
+                  {#if !isCalibrated}Calibration required
+                  {:else}Ready for analysis {teamsConfigured
                       ? `(Teams: ${team0Name} vs ${team1Name})`
                       : "(Auto-detecting teams...)"}
-                  {:else}Duration: {recordingDuration}{/if}
+                  {/if}
                 </p>
               </div>
             </div>

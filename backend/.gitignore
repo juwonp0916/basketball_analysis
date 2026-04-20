@@ -45,4 +45,4 @@ test_streaming_shot_detector.py
 
 output_videos/
 
-src/debug_shot_frames
+src/debug_shot_frames/

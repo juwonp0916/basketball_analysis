@@ -13,7 +13,6 @@ export type AnalysisCallbacks = {
 
 export type AnalysisSessionOptions = {
   backendUrl: string;
-  simulationMode?: boolean;
   isCalibrated?: boolean;
 }
 
@@ -28,7 +27,7 @@ export function createAnalysisSession(stream: MediaStream, callbacks: AnalysisCa
     channel.onopen = () => {
       console.log("Analytics channel is open");
 
-      if (options.simulationMode && options.isCalibrated) {
+      if (options.isCalibrated) {
         fetch(`${options.backendUrl}/detection/start`, { method: "POST" })
           .then((res) => res.json())
           .then((data) => console.log("Detection started:", data))
