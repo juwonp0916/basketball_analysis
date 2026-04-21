@@ -238,7 +238,7 @@ class StreamingTeamDetector:
         model,
         class_names: List[str],
         inference_dims: Tuple[int, int],
-        device: str
+        device: str,
     ) -> List[np.ndarray]:
         """
         Run person detection on one frame and return a list of LAB features.
@@ -253,9 +253,9 @@ class StreamingTeamDetector:
             stream=False,
             verbose=False,
             imgsz=inf_w,
-            device=device,
             conf=MIN_PERSON_CONFIDENCE,
-            max_det=30
+            max_det=30,
+            device=device
         )
 
         # Resolution-aware thresholds
@@ -381,7 +381,7 @@ class StreamingTeamDetector:
         model,
         class_names: List[str],
         inference_dims: Tuple[int, int],
-        device: str
+        device: str,
     ) -> bool:
         """
         Accumulate player color features from this frame and attempt clustering.
@@ -447,7 +447,7 @@ class StreamingTeamDetector:
         model,
         class_names: List[str],
         inference_dims: Tuple[int, int],
-        device: str
+        device: str,
     ) -> None:
         """
         Silent periodic re-check. Extracts features from the current frame,
@@ -644,7 +644,7 @@ class StreamingTeamDetector:
         class_names: List[str],
         inference_dims: Tuple[int, int],
         frame_dims: Tuple[int, int],
-        device: str = 'cpu'
+        device: str,
     ) -> Tuple[Optional[int], float, Optional[Tuple[int, int, int, int]]]:
         """
         Finds the player closest to the shooter position and classifies their team.
@@ -662,9 +662,9 @@ class StreamingTeamDetector:
             stream=True,
             verbose=False,
             imgsz=inf_w,
-            device=device,
             conf=0.3,
-            max_det=15
+            max_det=15,
+            device=device
         )
 
         best_bbox = None

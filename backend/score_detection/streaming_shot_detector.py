@@ -112,6 +112,7 @@ class StreamingShotDetector:
             calibration_mode: "4-point" or "6-point"
         """
         # Load YOLO model once
+        self.device = env.get('device', 0)
         self.model = YOLO(env['weights_path'], verbose=False)
 
         self.class_names = env['classes']
@@ -176,7 +177,6 @@ class StreamingShotDetector:
         self.team_detector = StreamingTeamDetector()
 
         # Device configuration
-        self.device = env.get('device', 0)
 
     def _setup_localization(self) -> None:
         """Initialize shot localizer if calibration points are provided"""
@@ -230,7 +230,7 @@ class StreamingShotDetector:
         except Exception:
             return False
 
-    def auto_calibrate_teams(self, frame: np.ndarray) -> bool:
+    def auto_calibrate_teams(self, frame: np.ndarray, device: str) -> bool:
         """
         Automatically detect and calibrate the two main team colors in the frame.
         Accumulates features across calls; returns True when calibration succeeds.
@@ -240,10 +240,10 @@ class StreamingShotDetector:
             self.model,
             self.class_names,
             (self.inference_width, self.inference_height),
-            self.device
+            device
         )
 
-    def recheck_teams(self, frame: np.ndarray) -> None:
+    def recheck_teams(self, frame: np.ndarray, device: str) -> None:
         """
         Silent periodic re-check of team colors (drift correction).
         Does not change is_configured or trigger any broadcast.
@@ -253,7 +253,7 @@ class StreamingShotDetector:
             self.model,
             self.class_names,
             (self.inference_width, self.inference_height),
-            self.device
+            device
         )
 
     def get_team_colors_hex(self) -> Tuple[str, str]:
@@ -301,16 +301,23 @@ class StreamingShotDetector:
             self.state.frame_history.pop(0)
             frame_entry_idx = len(self.state.frame_history) - 1
 
-        # Run ball/rim detection with CPU optimizations
+        # Run object detection (ball, rim, person, shoot)
+        if sequence_id % 5 == 0:
+            conf_thresh = 0.1
+            max_det = 15
+        else:
+            conf_thresh = 0.25
+            max_det = 10
+
         results = self.model(
             det_frame,
             stream=True,
             verbose=False,
             imgsz=self.inference_width,
-            device=self.device,
-            conf=0.25,  # Filter low-confidence detections early (saves post-processing)
-            iou=0.4,    # NMS threshold
-            max_det=10  # Limit maximum detections per frame
+            conf=conf_thresh,
+            iou=0.4,
+            max_det=max_det,
+            device=self.device
         )
 
         ball_detected = False
@@ -357,7 +364,7 @@ class StreamingShotDetector:
         shoot_detected = False
         if sequence_id % 5 == 0:
             shoot_detected = self._detect_shoot_class(
-                det_frame, timestamp_ms, sequence_id, person_detections
+                boxes if 'boxes' in locals() else [], timestamp_ms, sequence_id, person_detections
             )
 
         # Update frame_history entry with collected person detections
@@ -385,33 +392,18 @@ class StreamingShotDetector:
 
     def _detect_shoot_class(
         self,
-        det_frame: np.ndarray,
+        boxes_shoot: List,
         timestamp_ms: int,
         sequence_id: int,
         existing_person_detections: List[Dict] = None
     ) -> bool:
         """Detect shoot class and shooter position, collecting person detections."""
-        results_shoot = self.model(
-            det_frame,
-            stream=True,
-            verbose=False,
-            imgsz=self.inference_width,
-            device=self.device,
-            conf=0.1,   # Low threshold for early filtering
-            iou=0.4,
-            max_det=15  # Limit detections (shoot + people)
-        )
-
         shoot_detected = False
 
         # Collect person detections from the shoot pass (richer: lower conf, more detections)
         shoot_pass_persons = []
 
-        for r in results_shoot:
-            boxes_shoot = sorted(
-                [(box.xyxy[0], box.conf, box.cls, box.id) for box in r.boxes],
-                key=lambda x: -x[1]
-            )
+        if True:
 
             # Extract all person bboxes from this pass
             for box in boxes_shoot:
@@ -597,8 +589,7 @@ class StreamingShotDetector:
         def _run_inference_on(det_frame, ball_center):
             """Fallback: run YOLO inference on a frame. Returns (best_person_dict, best_dist, person_dets)."""
             results = self.model(det_frame, stream=True, verbose=False,
-                                 imgsz=self.inference_width, device=self.device,
-                                 conf=0.25, max_det=10)
+                                 imgsz=self.inference_width,                                 conf=0.25, max_det=10, device=self.device)
             bp = None
             bd = float('inf')
             person_dets = []
@@ -718,8 +709,7 @@ class StreamingShotDetector:
                 try:
                     results_shoot = self.model(
                         det_frame, stream=True, verbose=False,
-                        imgsz=self.inference_width, device=self.device,
-                        conf=0.1, max_det=15
+                        imgsz=self.inference_width,                        conf=0.1, max_det=15, device=self.device
                     )
                     for r in results_shoot:
                         boxes_shoot = sorted(
@@ -1122,7 +1112,7 @@ class StreamingShotDetector:
                         class_names=self.class_names,
                         inference_dims=(self.inference_width, self.inference_height),
                         frame_dims=(self.width, self.height),
-                        device=self.device
+                        device=self.device,
                     )
                 logger.info(f"Team detection result: team_id={team_id}, confidence={team_confidence:.2f}, bbox={bbox}")
             except Exception as e:

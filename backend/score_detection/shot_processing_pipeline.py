@@ -333,7 +333,7 @@ class ShotProcessingPipeline:
                     )
                     if should_try:
                         success = await asyncio.to_thread(
-                            self.detector.auto_calibrate_teams, img
+                            self.detector.auto_calibrate_teams, img, self.detector.device
                         )
                         if success:
                             self._team_calibrated = True
@@ -356,7 +356,7 @@ class ShotProcessingPipeline:
                     self._last_recheck_seq = self._sequence_id
                     old_hex = self.detector.get_team_colors_hex()
                     await asyncio.to_thread(
-                        self.detector.recheck_teams, img
+                        self.detector.recheck_teams, img, self.detector.device
                     )
                     new_hex = self.detector.get_team_colors_hex()
                     if new_hex != old_hex:
