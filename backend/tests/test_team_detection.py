@@ -236,6 +236,98 @@ class TestClusterAndValidate:
 
 
 # ---------------------------------------------------------------------------
+# Test: strict-vs-relaxed feature gating in frame extraction
+# ---------------------------------------------------------------------------
+
+class _FakeBox:
+    def __init__(self, xyxy, conf: float, cls: int):
+        self.xyxy = np.array([xyxy], dtype=np.float32)
+        self.conf = np.array([conf], dtype=np.float32)
+        self.cls = np.array([cls], dtype=np.float32)
+
+
+class _FakeResult:
+    def __init__(self, boxes):
+        self.boxes = boxes
+
+
+class _FakeModel:
+    def __init__(self, boxes):
+        self._boxes = boxes
+
+    def __call__(self, *_args, **_kwargs):
+        return [_FakeResult(self._boxes)]
+
+
+class TestFeatureGateFallback:
+    def test_relaxed_gate_used_when_strict_empty(self, detector, monkeypatch):
+        """
+        If strict filtering yields no features, relaxed filtering should
+        provide fallback features instead of returning an empty frame.
+        """
+        frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        classes = ["ball", "made", "person", "rim", "shoot"]
+
+        # 30x50 bbox at conf=0.2: fails strict gate (needs conf>=0.3 and h>=64)
+        # but passes relaxed gate (conf>=0.15, h>=43, w>=23).
+        box = _FakeBox(xyxy=[100, 100, 130, 150], conf=0.2, cls=2)
+        model = _FakeModel([box])
+
+        monkeypatch.setattr(
+            detector,
+            "_get_jersey_region",
+            lambda _bbox, _frame: np.full((20, 20, 3), 100, dtype=np.uint8),
+        )
+        monkeypatch.setattr(
+            detector,
+            "_extract_color_features",
+            lambda _region: np.array([80.0, 128.0, 128.0], dtype=np.float32),
+        )
+
+        feats = detector._extract_frame_features(
+            frame=frame,
+            model=model,
+            class_names=classes,
+            inference_dims=(960, 544),
+            device="cpu",
+        )
+        assert len(feats) == 1
+
+    def test_strict_features_prefered_over_relaxed(self, detector, monkeypatch):
+        """
+        When strict features exist, they should be returned and relaxed-only
+        features should be ignored for calibration quality.
+        """
+        frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        classes = ["ball", "made", "person", "rim", "shoot"]
+
+        strict_box = _FakeBox(xyxy=[200, 200, 260, 300], conf=0.8, cls=2)  # 60x100
+        relaxed_box = _FakeBox(xyxy=[100, 100, 130, 150], conf=0.2, cls=2)  # 30x50
+        model = _FakeModel([strict_box, relaxed_box])
+
+        monkeypatch.setattr(
+            detector,
+            "_get_jersey_region",
+            lambda _bbox, _frame: np.full((20, 20, 3), 100, dtype=np.uint8),
+        )
+        monkeypatch.setattr(
+            detector,
+            "_extract_color_features",
+            lambda _region: np.array([80.0, 128.0, 128.0], dtype=np.float32),
+        )
+
+        feats = detector._extract_frame_features(
+            frame=frame,
+            model=model,
+            class_names=classes,
+            inference_dims=(960, 544),
+            device="cpu",
+        )
+        # Only the strict feature should remain.
+        assert len(feats) == 1
+
+
+# ---------------------------------------------------------------------------
 # Regression test: run on annotated debug frames (if available)
 # ---------------------------------------------------------------------------
 

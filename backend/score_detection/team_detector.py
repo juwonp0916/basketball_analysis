@@ -31,8 +31,20 @@ logger = logging.getLogger(__name__)
 MIN_BBOX_HEIGHT_RATIO = 0.06   # Player must be >= 6% of frame height
 MIN_BBOX_WIDTH_RATIO = 0.02    # Player must be >= 2% of frame width
 
+# Relaxed fallback for WebRTC-compressed or distant players.
+# Used only when strict filtering yields zero usable features in a frame.
+RELAXED_MIN_BBOX_HEIGHT_RATIO = 0.04
+RELAXED_MIN_BBOX_WIDTH_RATIO = 0.012
+
 # Confidence: match YOLO's own conf parameter — let size filter reject noise
 MIN_PERSON_CONFIDENCE = 0.3
+RELAXED_MIN_PERSON_CONFIDENCE = 0.15
+
+# Last-resort pass for highly compressed / tone-mapped WebRTC frames.
+RESCUE_MIN_PERSON_CONFIDENCE = 0.08
+RESCUE_MIN_BBOX_HEIGHT_RATIO = 0.03
+RESCUE_MIN_BBOX_WIDTH_RATIO = 0.01
+RESCUE_MIN_INFERENCE_WIDTH = 1280
 
 # Accumulation limits
 MAX_ACCUMULATED_FEATURES = 80  # Cap memory; enough for robust clustering
@@ -69,6 +81,9 @@ class StreamingTeamDetector:
         # Multi-frame feature accumulation (each entry is a LAB [L, a, b] vector)
         self._accumulated_features: List[np.ndarray] = []
 
+        # Rescue-pass logging throttle (avoid per-frame spam)
+        self._rescue_logs_emitted = 0
+
         # Track IDs to Team assignments for temporal smoothing
         self.track_history: Dict[int, List[int]] = {}
 
@@ -82,6 +97,7 @@ class StreamingTeamDetector:
         self._configured = False
         self._accumulated_features.clear()
         self.track_history.clear()
+        self._rescue_logs_emitted = 0
 
     @property
     def is_configured(self) -> bool:
@@ -242,7 +258,11 @@ class StreamingTeamDetector:
     ) -> List[np.ndarray]:
         """
         Run person detection on one frame and return a list of LAB features.
-        Uses resolution-aware bbox filtering.
+        Uses a strict resolution-aware gate plus a relaxed fallback gate.
+
+        The relaxed gate is only used when strict filtering yields no usable
+        jersey features, which helps on heavily compressed WebRTC streams where
+        person boxes can shrink slightly below strict thresholds.
         """
         inf_w, inf_h = inference_dims
         frame_h, frame_w = frame.shape[:2]
@@ -253,7 +273,7 @@ class StreamingTeamDetector:
             stream=False,
             verbose=False,
             imgsz=inf_w,
-            conf=MIN_PERSON_CONFIDENCE,
+            conf=RELAXED_MIN_PERSON_CONFIDENCE,
             max_det=30,
             device=device
         )
@@ -261,15 +281,24 @@ class StreamingTeamDetector:
         # Resolution-aware thresholds
         min_height = frame_h * MIN_BBOX_HEIGHT_RATIO
         min_width = frame_w * MIN_BBOX_WIDTH_RATIO
+        relaxed_min_height = frame_h * RELAXED_MIN_BBOX_HEIGHT_RATIO
+        relaxed_min_width = frame_w * RELAXED_MIN_BBOX_WIDTH_RATIO
 
-        features: List[np.ndarray] = []
+        strict_features: List[np.ndarray] = []
+        fallback_features: List[np.ndarray] = []
+        persons_seen = 0
+        size_rejected = 0
+        color_rejected = 0
         for r in results:
             for box in r.boxes:
                 cls = int(box.cls[0])
                 if cls >= len(class_names) or class_names[cls] != 'person':
                     continue
 
-                if float(box.conf[0]) < MIN_PERSON_CONFIDENCE:
+                persons_seen += 1
+
+                conf = float(box.conf[0])
+                if conf < RELAXED_MIN_PERSON_CONFIDENCE:
                     continue
 
                 # Scale coords back to full frame
@@ -281,14 +310,141 @@ class StreamingTeamDetector:
                 bbox_h = y2 - y1
                 bbox_w = x2 - x1
 
-                if bbox_h < min_height or bbox_w < min_width:
+                strict_ok = (
+                    conf >= MIN_PERSON_CONFIDENCE
+                    and bbox_h >= min_height
+                    and bbox_w >= min_width
+                )
+                relaxed_ok = (
+                    bbox_h >= relaxed_min_height
+                    and bbox_w >= relaxed_min_width
+                )
+
+                if not strict_ok and not relaxed_ok:
+                    size_rejected += 1
                     continue
 
                 jersey_region = self._get_jersey_region((x1, y1, x2, y2), frame)
                 if jersey_region is not None:
                     feat = self._extract_color_features(jersey_region)
                     if feat is not None:
-                        features.append(feat)
+                        if strict_ok:
+                            strict_features.append(feat)
+                        else:
+                            fallback_features.append(feat)
+                    else:
+                        color_rejected += 1
+
+        if strict_features:
+            return strict_features
+
+        if fallback_features:
+            logger.debug(
+                f"[TeamDetector] Using relaxed feature gate "
+                f"(persons={persons_seen}, fallback_features={len(fallback_features)})"
+            )
+            return fallback_features
+
+        if persons_seen > 0 and (size_rejected > 0 or color_rejected > 0):
+            logger.debug(
+                f"[TeamDetector] Persons seen but no usable jersey features "
+                f"(persons={persons_seen}, size_rejected={size_rejected}, "
+                f"color_rejected={color_rejected})"
+            )
+
+        rescue_features = self._extract_frame_features_rescue(
+            frame, model, class_names, inference_dims, device
+        )
+        if rescue_features:
+            if self._rescue_logs_emitted < 5:
+                logger.info(
+                    f"[TeamDetector] Rescue pass recovered {len(rescue_features)} features"
+                )
+                self._rescue_logs_emitted += 1
+            return rescue_features
+
+        return []
+
+    @staticmethod
+    def _enhance_for_person_detection(frame: np.ndarray) -> np.ndarray:
+        """
+        Improve local contrast for person detection on compressed/HDR-tonemapped
+        frames. Used only as a rescue path; color features are still extracted
+        from the original frame.
+        """
+        ycrcb = cv2.cvtColor(frame, cv2.COLOR_BGR2YCrCb)
+        y, cr, cb = cv2.split(ycrcb)
+        clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
+        y = clahe.apply(y)
+        enhanced = cv2.cvtColor(cv2.merge((y, cr, cb)), cv2.COLOR_YCrCb2BGR)
+        enhanced = cv2.convertScaleAbs(enhanced, alpha=1.08, beta=4)
+        return enhanced
+
+    def _extract_frame_features_rescue(
+        self,
+        frame: np.ndarray,
+        model,
+        class_names: List[str],
+        inference_dims: Tuple[int, int],
+        device: str,
+    ) -> List[np.ndarray]:
+        """
+        Last-resort feature extraction when the default pass returns zero.
+        Uses contrast-enhanced detection frame, larger inference size, and
+        slightly looser person gates.
+        """
+        frame_h, frame_w = frame.shape[:2]
+        inf_w, inf_h = inference_dims
+
+        rescue_w = min(frame_w, max(inf_w, RESCUE_MIN_INFERENCE_WIDTH))
+        rescue_h = int(rescue_w * frame_h / frame_w)
+        rescue_w = max(32, (rescue_w // 32) * 32)
+        rescue_h = max(32, (rescue_h // 32) * 32)
+
+        det_src = self._enhance_for_person_detection(frame)
+        det_frame = cv2.resize(det_src, (rescue_w, rescue_h))
+
+        results = model(
+            det_frame,
+            stream=False,
+            verbose=False,
+            imgsz=rescue_w,
+            conf=RESCUE_MIN_PERSON_CONFIDENCE,
+            max_det=40,
+            device=device,
+        )
+
+        min_height = frame_h * RESCUE_MIN_BBOX_HEIGHT_RATIO
+        min_width = frame_w * RESCUE_MIN_BBOX_WIDTH_RATIO
+
+        features: List[np.ndarray] = []
+        for r in results:
+            for box in r.boxes:
+                cls = int(box.cls[0])
+                if cls >= len(class_names) or class_names[cls] != 'person':
+                    continue
+
+                conf = float(box.conf[0])
+                if conf < RESCUE_MIN_PERSON_CONFIDENCE:
+                    continue
+
+                x1 = int(box.xyxy[0][0] * frame_w / rescue_w)
+                y1 = int(box.xyxy[0][1] * frame_h / rescue_h)
+                x2 = int(box.xyxy[0][2] * frame_w / rescue_w)
+                y2 = int(box.xyxy[0][3] * frame_h / rescue_h)
+
+                bbox_h = y2 - y1
+                bbox_w = x2 - x1
+                if bbox_h < min_height or bbox_w < min_width:
+                    continue
+
+                jersey_region = self._get_jersey_region((x1, y1, x2, y2), frame)
+                if jersey_region is None:
+                    continue
+
+                feat = self._extract_color_features(jersey_region)
+                if feat is not None:
+                    features.append(feat)
 
         return features
 

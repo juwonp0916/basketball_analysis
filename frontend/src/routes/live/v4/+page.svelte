@@ -132,7 +132,7 @@
     if (!videoElement) return;
     simulationMode = true;
     videoElement.crossOrigin = "anonymous";
-    videoElement.src = `${BACKEND_URL}/video/video4.mp4`;
+    videoElement.src = `${BACKEND_URL}/video/live_video1_sdr.mp4`;
     await new Promise<void>((r) => videoElement!.addEventListener("canplay", () => r(), { once: true }));
     videoElement.playbackRate = playbackSpeed;
     isPaused = true;
@@ -288,7 +288,6 @@
   });
 
   let isRecording = $state(false);
-
 </script>
 
 <!-- The template remains the same structure but with extracted components -->
@@ -417,9 +416,7 @@
                 <h3 class="font-bold text-white">{simulationMode ? "Simulation Mode" : "Live Camera"}</h3>
                 <p class="text-sm text-gray-400">
                   {#if !isCalibrated}Calibration required
-                  {:else}Ready for analysis {teamsConfigured
-                      ? `(Teams: ${team0Name} vs ${team1Name})`
-                      : "(Auto-detecting teams...)"}
+                  {:else}Ready for analysis {teamsConfigured ? `(Teams: ${team0Name} vs ${team1Name})` : "(Auto-detecting teams...)"}
                   {/if}
                 </p>
               </div>
