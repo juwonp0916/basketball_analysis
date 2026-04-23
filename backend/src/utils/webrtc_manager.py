@@ -427,8 +427,6 @@ class ConnectionManager:
         """
         Start real shot detection (requires calibration).
 
-        This stops the dummy broadcast and starts the real detection pipeline.
-
         Returns:
             True if detection started successfully
         """
@@ -453,7 +451,8 @@ class ConnectionManager:
                 calibration_points=self.calibration_points,
                 frame_width=self.calibration_dimensions[0] if self.calibration_dimensions else 1280,
                 frame_height=self.calibration_dimensions[1] if self.calibration_dimensions else 720,
-                calibration_mode=getattr(self, 'calibration_mode', '4-point')
+                calibration_mode=getattr(self, 'calibration_mode', '4-point'),
+                court_spec=getattr(self, 'court_spec', 'FIBA'),
             )
 
             await self.shot_pipeline.start()
