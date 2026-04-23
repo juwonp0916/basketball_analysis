@@ -55,7 +55,8 @@ class ShotProcessingPipeline:
         frame_width: int = 1280,
         frame_height: int = 720,
         frame_rate: float = 30.0,
-        calibration_mode: str = "4-point"
+        calibration_mode: str = "4-point",
+        court_spec: str = "FIBA"
     ):
         """
         Initialize the processing pipeline.
@@ -77,6 +78,7 @@ class ShotProcessingPipeline:
         self.frame_height = frame_height
         self.frame_rate = frame_rate
         self.calibration_mode = calibration_mode
+        self.court_spec = court_spec
 
         # Raw calibration points (in the coordinate space of the calibration frame).
         # On the first incoming frame we detect whether WebRTC delivers a different
@@ -90,7 +92,8 @@ class ShotProcessingPipeline:
             frame_width=frame_width,
             frame_height=frame_height,
             frame_rate=frame_rate,
-            calibration_mode=calibration_mode
+            calibration_mode=calibration_mode,
+            court_spec=court_spec
         )
 
         # Pipeline state

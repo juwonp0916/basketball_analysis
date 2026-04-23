@@ -99,7 +99,8 @@ class StreamingShotDetector:
         frame_width: int = 1280,
         frame_height: int = 720,
         frame_rate: float = 30.0,
-        calibration_mode: str = "4-point"
+        calibration_mode: str = "4-point",
+        court_spec: str = "FIBA"
     ):
         """
         Initialize the streaming shot detector.
@@ -166,6 +167,7 @@ class StreamingShotDetector:
         # Shot localization
         self.calibration_points = calibration_points
         self.calibration_mode = calibration_mode
+        self.court_spec = court_spec
         self.shot_localizer = None
         self._setup_localization()
 
@@ -191,8 +193,9 @@ class StreamingShotDetector:
                 calibration_points=self.calibration_points,
                 image_dimensions=(self.width, self.height),
                 court_img_path=court_img_path,
-                enable_visualization=False,  # Disable file-based visualization for streaming
-                calibration_mode=getattr(self, 'calibration_mode', '4-point')
+                enable_visualization=False,
+                calibration_mode=getattr(self, 'calibration_mode', '4-point'),
+                court_spec=getattr(self, 'court_spec', 'FIBA')
             )
         except Exception as e:
             print(f"[StreamingShotDetector] Failed to initialize localizer: {e}")
