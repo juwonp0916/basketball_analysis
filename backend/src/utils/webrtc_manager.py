@@ -462,21 +462,16 @@ class ConnectionManager:
 
         except Exception as e:
             logger.exception(f"Failed to start shot detection: {e}")
-            # Restart dummy on failure
-            self.start_dummy_broadcast()
             return False
 
     async def stop_shot_detection(self) -> None:
         """
-        Stop shot detection and revert to dummy broadcast.
+        Stop shot detection.
         """
         if self.shot_pipeline:
             await self.shot_pipeline.stop()
             self.shot_pipeline = None
             logger.info("Shot detection stopped")
-
-        # Restart dummy broadcast
-        self.start_dummy_broadcast()
 
     def reset_stats(self) -> None:
         """Reset accumulated statistics"""

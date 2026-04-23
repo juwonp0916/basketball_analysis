@@ -137,14 +137,27 @@
   async function handleStartSimulation() {
     if (!videoElement) return;
     simulationMode = true;
-    videoElement.crossOrigin = "anonymous";
-    videoElement.src = `${BACKEND_URL}/video/match1.mp4`;
-    await new Promise<void>((r) => videoElement!.addEventListener("canplay", () => r(), { once: true }));
-    videoElement.playbackRate = playbackSpeed;
-    isPaused = true;
-    await videoElement.play();
-    stream = (videoElement as any).captureStream(30); // 30 fps to match detection pipeline
-    videoElement.pause();
+    try {
+      videoElement.crossOrigin = "anonymous";
+      videoElement.src = `${BACKEND_URL}/video/match1.mp4`;
+      await new Promise<void>((resolve, reject) => {
+        const onCanPlay = () => { videoElement!.removeEventListener("error", onError); resolve(); };
+        const onError = () => {
+          videoElement!.removeEventListener("canplay", onCanPlay);
+          reject(new Error("Video failed to load — is the backend running?"));
+        };
+        videoElement!.addEventListener("canplay", onCanPlay, { once: true });
+        videoElement!.addEventListener("error", onError, { once: true });
+      });
+      videoElement.playbackRate = playbackSpeed;
+      isPaused = true;
+      await videoElement.play();
+      stream = (videoElement as any).captureStream(30);
+      videoElement.pause();
+    } catch (e) {
+      simulationMode = false;
+      alert(`Could not start simulation: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   function togglePlayPause() {
@@ -423,10 +436,10 @@
                     })
                     .join(" ")}
                   fill="none"
-                  stroke="#3b82f6"
-                  stroke-width="1.5"
+                  stroke="#4ade80"
+                  stroke-width="2"
                   stroke-dasharray="6 3"
-                  opacity={overlayUpdating ? 0.3 : 0.75}
+                  opacity={overlayUpdating ? 0.3 : 0.9}
                 />
               {/if}
             {/each}
