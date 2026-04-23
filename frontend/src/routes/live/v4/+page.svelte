@@ -7,8 +7,9 @@
   import ShotChart from "$lib/components/ShotChart.svelte";
   import { createAnalysisSession } from "$lib/utils/webrtc-utils";
   import {
-    videoClickToCalibrationPoint,
     submitCalibration,
+    CALIBRATION_COLORS,
+    CALIBRATION_LABLES,
     type CalibrationPoint,
     type CalibrationResult,
     MAX_CALIBRATION_POINTS,
@@ -36,6 +37,9 @@
   let team0Name = $state("Team 1");
   let team1Name = $state("Team 2");
   let teamsConfigured = $state(false);
+  let adjustPhase = $state(false);
+  let dragging = $state<number | null>(null);
+  let overlayUpdating = $state(false);
 
   // --- Analysis state ---
   let session = $state<ReturnType<typeof createAnalysisSession> | null>(null);
@@ -161,9 +165,22 @@
   }
 
   // --- Calibration handlers ---
+  function clickToVideoPoint(e: MouseEvent, el: HTMLVideoElement): CalibrationPoint {
+    const rect = el.getBoundingClientRect();
+    const cW = el.clientWidth, cH = el.clientHeight;
+    const vW = el.videoWidth, vH = el.videoHeight;
+    const s = Math.max(cW / vW, cH / vH);
+    const offX = (vW - cW / s) / 2;
+    const offY = (vH - cH / s) / 2;
+    return {
+      x: (e.clientX - rect.left) / s + offX,
+      y: (e.clientY - rect.top) / s + offY,
+    };
+  }
+
   function handleCalibrationClick(e: MouseEvent) {
     if (!videoElement || calibrationPoints.length >= MAX_CALIBRATION_POINTS) return;
-    calibrationPoints = [...calibrationPoints, videoClickToCalibrationPoint(e, videoElement)];
+    calibrationPoints = [...calibrationPoints, clickToVideoPoint(e, videoElement)];
   }
 
   async function confirmCalibration() {
@@ -172,9 +189,57 @@
       const data = await submitCalibration(calibrationPoints, videoElement.videoWidth, videoElement.videoHeight, "4-point");
       if (data.success) {
         calibrationResult = data;
+        adjustPhase = true;
+      } else {
+        alert(`Calibration failed: ${data.error || "Unknown error"}`);
+      }
+    } catch {
+      alert("Could not send calibration to server.");
+    }
+  }
+
+  function onDragStart(e: PointerEvent, idx: number) {
+    e.preventDefault();
+    dragging = idx;
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  }
+
+  function onDragMove(e: PointerEvent) {
+    if (dragging === null || !videoElement) return;
+    const pt = clickToVideoPoint(e as unknown as MouseEvent, videoElement);
+    calibrationPoints = calibrationPoints.map((p, i) =>
+      i === dragging
+        ? { x: Math.max(0, Math.min(videoElement!.videoWidth, pt.x)), y: Math.max(0, Math.min(videoElement!.videoHeight, pt.y)) }
+        : p
+    );
+  }
+
+  async function onDragEnd() {
+    if (dragging === null) return;
+    dragging = null;
+    await updateOverlay();
+  }
+
+  async function updateOverlay() {
+    if (!videoElement || calibrationPoints.length !== MAX_CALIBRATION_POINTS) return;
+    overlayUpdating = true;
+    try {
+      const data = await submitCalibration(calibrationPoints, videoElement.videoWidth, videoElement.videoHeight, "4-point");
+      if (data.success) calibrationResult = data;
+    } catch (_) {}
+    finally { overlayUpdating = false; }
+  }
+
+  async function confirmAdjust() {
+    if (!videoElement || calibrationPoints.length !== MAX_CALIBRATION_POINTS) return;
+    try {
+      const data = await submitCalibration(calibrationPoints, videoElement.videoWidth, videoElement.videoHeight, "4-point");
+      if (data.success) {
+        calibrationResult = data;
         isCalibrated = true;
         showCourtOverlay = true;
         calibrationMode = false;
+        adjustPhase = false;
         startAnalysisWebrtc();
       } else {
         alert(`Calibration failed: ${data.error || "Unknown error"}`);
@@ -186,9 +251,13 @@
 
   function vidToDisplay(x: number, y: number): { x: number; y: number } {
     if (!videoElement) return { x, y };
-    const scaleX = videoElement.clientWidth / videoElement.videoWidth;
-    const scaleY = videoElement.clientHeight / videoElement.videoHeight;
-    return { x: x * scaleX, y: y * scaleY };
+    const cW = videoElement.clientWidth, cH = videoElement.clientHeight;
+    const vW = videoElement.videoWidth, vH = videoElement.videoHeight;
+    if (!vW || !vH) return { x, y };
+    const s = Math.max(cW / vW, cH / vH);
+    const offX = (vW - cW / s) / 2;
+    const offY = (vH - cH / s) / 2;
+    return { x: (x - offX) * s, y: (y - offY) * s };
   }
 
   // Max per-point error for color grading: green < 0.15m, yellow < 0.35m, red >= 0.35m
@@ -271,6 +340,7 @@
       stopCamera();
     }
     calibrationMode = false;
+    adjustPhase = false;
     calibrationPoints = [];
     isCalibrated = false;
     teamsConfigured = false;
@@ -280,6 +350,7 @@
     if (!videoElement) return;
     videoElement.pause();
     calibrationMode = true;
+    adjustPhase = false;
     calibrationPoints = [];
     isCalibrated = false;
   }
@@ -314,7 +385,11 @@
     <div class="lg:col-span-2 flex flex-col gap-6">
       <!-- Video Player -->
       <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-      <div class="relative w-full aspect-video bg-black rounded-xl overflow-hidden border border-gray-800 shadow-2xl">
+      <div
+        class="relative w-full aspect-video bg-black rounded-xl overflow-hidden border border-gray-800 shadow-2xl"
+        onpointermove={(e) => { if (adjustPhase) onDragMove(e); }}
+        onpointerup={() => { if (adjustPhase) onDragEnd(); }}
+      >
         {#if !stream}
           <div class="absolute inset-0 flex flex-col items-center justify-center text-gray-500">
             <Video class="w-12 h-12 mb-4 opacity-50" />
@@ -325,7 +400,7 @@
         <!-- svelte-ignore a11y_media_has_caption -->
         <video bind:this={videoElement} class="w-full h-full object-cover" autoplay playsinline muted crossorigin="anonymous"></video>
 
-        {#if calibrationMode && videoElement}
+        {#if calibrationMode && !adjustPhase && videoElement}
           <CalibrationOverlay
             points={calibrationPoints}
             {videoElement}
@@ -335,10 +410,9 @@
           />
         {/if}
 
-        <!-- Court outline overlay shown after calibration to verify accuracy -->
-        {#if isCalibrated && showCourtOverlay && calibrationResult?.court_outline_pixels && videoElement}
+        <!-- Court outline: shown in adjust phase and after calibration -->
+        {#if (adjustPhase || isCalibrated) && showCourtOverlay && calibrationResult?.court_outline_pixels && videoElement}
           <svg class="absolute inset-0 w-full h-full pointer-events-none">
-            <!-- Court lines projected back to video pixel space -->
             {#each calibrationResult.court_outline_pixels as polyline}
               {#if polyline.length >= 2}
                 <polyline
@@ -352,40 +426,73 @@
                   stroke="#3b82f6"
                   stroke-width="1.5"
                   stroke-dasharray="6 3"
-                  opacity="0.75"
+                  opacity={overlayUpdating ? 0.3 : 0.75}
                 />
               {/if}
             {/each}
+          </svg>
+        {/if}
 
-            <!-- Calibration point dots with per-point error color coding -->
+        <!-- Adjust phase: draggable dots + quad lines + Re-do/Confirm buttons -->
+        {#if adjustPhase && videoElement}
+          <svg class="absolute inset-0 w-full h-full pointer-events-none">
+            {#if calibrationPoints.length === 4}
+              {@const dp = calibrationPoints.map((p) => vidToDisplay(p.x, p.y))}
+              <line x1={dp[0].x} y1={dp[0].y} x2={dp[1].x} y2={dp[1].y} stroke="#ef4444" stroke-width="1.5" />
+              <line x1={dp[0].x} y1={dp[0].y} x2={dp[2].x} y2={dp[2].y} stroke="#ef4444" stroke-width="1.5" />
+              <line x1={dp[1].x} y1={dp[1].y} x2={dp[3].x} y2={dp[3].y} stroke="#ef4444" stroke-width="1.5" />
+              <line x1={dp[2].x} y1={dp[2].y} x2={dp[3].x} y2={dp[3].y} stroke="#ef4444" stroke-width="1.5" />
+            {/if}
+          </svg>
+
+          {#each calibrationPoints as point, idx}
+            {@const dp = vidToDisplay(point.x, point.y)}
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div
+              class="absolute rounded-full cursor-grab active:cursor-grabbing z-20 select-none"
+              style="width:12px;height:12px;left:{dp.x - 6}px;top:{dp.y - 6}px;background-color:{CALIBRATION_COLORS[idx]};touch-action:none;box-shadow:0 0 0 2px black;"
+              onpointerdown={(e) => onDragStart(e, idx)}
+            ></div>
+          {/each}
+
+          <div class="absolute top-4 left-1/2 -translate-x-1/2 bg-black/80 rounded-lg px-4 py-2 text-center pointer-events-none z-10">
+            <p class="text-sm font-medium text-white">Drag any dot to fine-tune alignment</p>
+            <p class="text-xs text-gray-400 mt-0.5">
+              {#each [0,1,2,3] as i}
+                <span style="color:{CALIBRATION_COLORS[i]}">{i+1}. {CALIBRATION_LABLES[i]}</span>{i < 3 ? " · " : ""}
+              {/each}
+            </p>
+          </div>
+
+          <div class="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-3 z-20">
+            <Button
+              onclick={() => { adjustPhase = false; calibrationPoints = []; calibrationResult = null; }}
+              variant="secondary"
+              size="sm"
+            >
+              Re-do
+            </Button>
+            <Button onclick={confirmAdjust} size="sm" class="bg-green-600 hover:bg-green-700">
+              Confirm
+            </Button>
+          </div>
+        {/if}
+
+        <!-- Post-calibration: error-coded dots + toggle + badge -->
+        {#if isCalibrated && showCourtOverlay && calibrationResult && videoElement}
+          <svg class="absolute inset-0 w-full h-full pointer-events-none">
             {#each calibrationPoints as pt, i}
               {@const dp = vidToDisplay(pt.x, pt.y)}
               {@const err = calibrationResult.point_errors?.[i]}
-              <circle
-                cx={dp.x}
-                cy={dp.y}
-                r="6"
-                fill={err != null ? errorColor(err) : "#94a3b8"}
-                opacity="0.9"
-                stroke="white"
-                stroke-width="1.5"
-              />
+              <circle cx={dp.x} cy={dp.y} r="6" fill={err != null ? errorColor(err) : "#94a3b8"} opacity="0.9" stroke="white" stroke-width="1.5" />
               {#if err != null}
-                <text
-                  x={dp.x + 10}
-                  y={dp.y + 4}
-                  fill="white"
-                  font-size="10"
-                  font-weight="600"
-                  style="text-shadow: 0 1px 2px rgba(0,0,0,0.9);"
-                >
+                <text x={dp.x + 10} y={dp.y + 4} fill="white" font-size="10" font-weight="600" style="text-shadow:0 1px 2px rgba(0,0,0,0.9);">
                   {err < 0.01 ? "<1cm" : `${(err * 100).toFixed(0)}cm`}
                 </text>
               {/if}
             {/each}
           </svg>
 
-          <!-- Toggle + quality badge -->
           <div class="absolute bottom-3 left-3 flex items-center gap-2 pointer-events-auto">
             <button
               onclick={() => (showCourtOverlay = !showCourtOverlay)}
@@ -397,7 +504,7 @@
               {@const avg = calibrationResult.avg_error}
               <span
                 class="text-xs px-2 py-1 rounded font-medium"
-                style="background: rgba(0,0,0,0.7); color: {avg < 0.15 ? '#22c55e' : avg < 0.35 ? '#eab308' : '#ef4444'};"
+                style="background:rgba(0,0,0,0.7);color:{avg < 0.15 ? '#22c55e' : avg < 0.35 ? '#eab308' : '#ef4444'};"
               >
                 Avg error: {(avg * 100).toFixed(0)}cm {avg < 0.15 ? "✓" : avg < 0.35 ? "⚠" : "✗ recalibrate"}
               </span>
