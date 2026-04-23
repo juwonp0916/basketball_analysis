@@ -29,8 +29,6 @@ class Offer(BaseModel):
 
 @app.on_event("startup")
 async def on_startup() -> None:
-    # Start dummy broadcaster so frontend should immediately receive messages once DC opens
-    manager.start_dummy_broadcast(interval_sec=0.5)
     logger.info("FastAPI startup complete")
 
 
@@ -171,10 +169,7 @@ async def get_calibration() -> CalibrationResponse:
 @app.post("/detection/start", response_model=DetectionStatusResponse)
 async def start_detection() -> DetectionStatusResponse:
     """
-    Start real shot detection.
-
-    Requires calibration to be set first. This will stop the dummy broadcast
-    and start processing frames with the YOLO-based shot detector.
+    Start real shot detection. Requires calibration to be set first.
     """
     if not manager.is_calibrated:
         raise HTTPException(
