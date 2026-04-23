@@ -2,7 +2,7 @@
   import * as Card from "$lib/components/ui/card/index.js";
   import { Chart, Svg, Points } from "layerchart";
 
-  type ShotPoint = { id: number; x: number; y: number; result: "made" | "missed" };
+  type ShotPoint = { id: number; x: number; y: number; result: "made" | "missed", type?: "2pt" | "3pt" };
 
   type Props = {
     shotPoints: ShotPoint[];
@@ -11,6 +11,24 @@
   };
 
   let { shotPoints, selectedShotId, hideHeader = false }: Props = $props();
+
+  let activeFilter = $state<"all" | "made" | "missed" | "3pt" | "2pt">("all");
+
+  let filteredPoints = $derived.by(() => {
+    switch (activeFilter) {
+      case "made":
+        return shotPoints.filter(p => p.result === "made");
+      case "missed":
+        return shotPoints.filter(p => p.result === "missed");
+      case "3pt":
+        return shotPoints.filter(p => p.type === "3pt");
+      case "2pt":
+        return shotPoints.filter(p => p.type === "2pt");
+      case "all":
+      default:
+        return shotPoints;
+    }
+  });
 
   const chartPadding = { top: 20, bottom: 20, left: 20, right: 20 };
   let containerWidth = $state(0);
@@ -23,17 +41,17 @@
   {#if !hideHeader}
     <Card.Header class="pb-2">
       <div class="flex bg-[#0f1116] rounded-lg p-1 w-full">
-        <button class="flex-1 py-1 text-sm font-medium rounded bg-[#1a1d24] text-white shadow">All</button>
-        <button class="flex-1 py-1 text-sm font-medium text-gray-400 hover:text-white">Made</button>
-        <button class="flex-1 py-1 text-sm font-medium text-gray-400 hover:text-white">Missed</button>
-        <button class="flex-1 py-1 text-sm font-medium text-gray-400 hover:text-white">3PT</button>
-        <button class="flex-1 py-1 text-sm font-medium text-gray-400 hover:text-white">2PT</button>
+        <button onclick={() => activeFilter = 'all'} class="flex-1 py-1 text-sm font-medium rounded {activeFilter === 'all' ? 'bg-[#1a1d24] text-white shadow' : 'text-gray-400 hover:text-white'}">All</button>
+        <button onclick={() => activeFilter = 'made'} class="flex-1 py-1 text-sm font-medium rounded {activeFilter === 'made' ? 'bg-[#1a1d24] text-white shadow' : 'text-gray-400 hover:text-white'}">Made</button>
+        <button onclick={() => activeFilter = 'missed'} class="flex-1 py-1 text-sm font-medium rounded {activeFilter === 'missed' ? 'bg-[#1a1d24] text-white shadow' : 'text-gray-400 hover:text-white'}">Missed</button>
+        <button onclick={() => activeFilter = '3pt'} class="flex-1 py-1 text-sm font-medium rounded {activeFilter === '3pt' ? 'bg-[#1a1d24] text-white shadow' : 'text-gray-400 hover:text-white'}">3PT</button>
+        <button onclick={() => activeFilter = '2pt'} class="flex-1 py-1 text-sm font-medium rounded {activeFilter === '2pt' ? 'bg-[#1a1d24] text-white shadow' : 'text-gray-400 hover:text-white'}">2PT</button>
       </div>
     </Card.Header>
   {/if}
   <Card.Content class="flex-1 relative flex items-center justify-center {hideHeader ? 'p-0' : 'p-4'} min-h-0">
     <div class="relative max-h-full max-w-full" style="aspect-ratio: 50 / 47; height: 100%; width: auto;" bind:clientWidth={containerWidth} bind:clientHeight={containerHeight}>
-      <Chart data={shotPoints} x="x" y="y" xDomain={[0, 50]} yDomain={[47, 0]} padding={chartPadding}>
+      <Chart data={filteredPoints} x="x" y="y" xDomain={[0, 50]} yDomain={[47, 0]} padding={chartPadding}>
         <Svg>
           <svg width={innerWidth} height={innerHeight} viewBox="0 0 50 47" preserveAspectRatio="none" style="overflow: visible;">
             <g class="court-lines" stroke="#374151" stroke-width="0.5" fill="none">

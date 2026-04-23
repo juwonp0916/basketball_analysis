@@ -51,8 +51,10 @@
     percentages: { fieldGoal: 0.0, twoPoint: 0.0, threePoint: 0.0 },
   });
 
-  type ShotPoint = { id: number; x: number; y: number; result: Shot["result"]; team?: string };
-  const shotPoints = $derived<ShotPoint[]>(shots.map((s) => ({ id: s.id, x: s.coord.x, y: s.coord.y, result: s.result, team: s.team })));
+  type ShotPoint = { id: number; x: number; y: number; result: Shot["result"]; team?: string; type?: Shot["type"] };
+  const shotPoints = $derived<ShotPoint[]>(
+    shots.map((s) => ({ id: s.id, x: s.coord.x, y: s.coord.y, result: s.result, team: s.team, type: s.type })),
+  );
 
   // Computed local stats derived from current shots mapped to team 0 and 1
   function calculateStats(shotList: Shot[]): GameStats {
@@ -132,7 +134,7 @@
     if (!videoElement) return;
     simulationMode = true;
     videoElement.crossOrigin = "anonymous";
-    videoElement.src = `${BACKEND_URL}/video/live_video1_sdr.mp4`;
+    videoElement.src = `${BACKEND_URL}/video/match1.mp4`;
     await new Promise<void>((r) => videoElement!.addEventListener("canplay", () => r(), { once: true }));
     videoElement.playbackRate = playbackSpeed;
     isPaused = true;
