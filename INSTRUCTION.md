@@ -1,270 +1,110 @@
-# Basketball Analysis System - Setup and Running Instructions
+# Setup and usage
 
-This is a basketball shot detection and analysis system with real-time video processing capabilities. The system consists of a Python FastAPI backend and a SvelteKit frontend.
+[Project overview](README.md) · [System architecture](docs/ARCHITECTURE.md)
 
-## System Overview
-
-- **Backend**: FastAPI server with WebRTC support for video streaming and YOLO-based shot detection
-- **Frontend**: SvelteKit application with real-time data visualization
-- **Communication**: WebRTC for video + REST API for control
+The live application consists of a FastAPI backend and a SvelteKit frontend. Run both services locally, then open the dashboard at `/live/v4`.
 
 ## Prerequisites
 
-### Backend Requirements
-- Python 3.8 or higher
-- pip (Python package manager)
-- Virtual environment (recommended)
+- A Python environment compatible with [backend/requirements.txt](backend/requirements.txt). The dependency ranges are broad; this repository does not provide a locked Python environment.
+- Node.js **22.12 or later in the 22.x series**, or another version satisfying the engines in [frontend/package-lock.json](frontend/package-lock.json).
+- A camera and a browser supporting WebRTC and camera capture.
+- A stationary view of the basket and court markings, with two visually distinguishable jersey colors for team attribution.
 
-### Frontend Requirements
-- Node.js 16+ and npm
-- Modern web browser with WebRTC support
+## 1. Clone the repository
 
-## Installation
+```bash
+git clone https://github.com/juwonp0916/basketball_analysis.git
+cd basketball_analysis
+```
 
-### 1. Backend Setup
+## 2. Install the backend
 
-Navigate to the backend directory:
 ```bash
 cd backend
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
 ```
 
-Create and activate a virtual environment:
-```bash
-# Windows
-python -m venv venv
-venv\Scripts\activate
+On Windows PowerShell, activate with `.venv/Scripts/Activate.ps1`.
 
-# Linux/Mac
-python3 -m venv venv
-source venv/bin/activate
+Before launching, check [score_detection/config.yaml](backend/score_detection/config.yaml):
+
+| Setting | Current value | Configuration |
+| --- | --- | --- |
+| `weights_path` | `weights/260413_best.pt` | Resolved relative to `backend/score_detection/`. This checkpoint is tracked in the repository. |
+| `classes` | `ball`, `made`, `person`, `rim`, `shoot` | Must match the loaded checkpoint's class order. |
+| `device` | `mps` | The checked-in setting targets Apple Metal. Set it to `cpu` when MPS is unavailable; CUDA use requires a compatible PyTorch installation and device setting. |
+
+The `input` entry is a legacy local video path; the live pipeline receives frames over WebRTC. The custom basketball checkpoint is required for the documented class mapping.
+
+Start the backend from `backend/`:
+
+```bash
+uvicorn main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-Install Python dependencies:
+Check [backend health](http://127.0.0.1:8000/health) and [interactive API documentation](http://127.0.0.1:8000/docs).
+
+## 3. Install and start the frontend
+
+In a second terminal, from the repository root:
+
 ```bash
-pip install -r requirements.txt
+cd frontend
+npm ci
+npm run dev -- --host 127.0.0.1 --port 5173
 ```
 
-**Note**: Some dependencies like `detectron2` may require additional setup. If you encounter issues:
-- For PyTorch: Visit https://pytorch.org to get the correct installation command for your system
-- For detectron2: Follow instructions at https://detectron2.readthedocs.io/en/latest/tutorials/install.html
+Open **[the analysis dashboard](http://127.0.0.1:5173/live/v4)**. The `/` route still contains the SvelteKit starter page.
 
-### 2. Frontend Setup
+The backend address is configured in [frontend/src/lib/index.ts](frontend/src/lib/index.ts). Backend CORS currently allows `http://localhost:5173` and `http://127.0.0.1:5173`; changing ports or hosts requires updating these settings in [backend/main.py](backend/main.py).
 
-Navigate to the frontend directory:
+## 4. Run a camera session
+
+1. Start the camera and grant browser access.
+2. Select **Start Analysis** to enter calibration.
+3. Mark the four points in the order shown by the overlay: baseline left paint corner, baseline right paint corner, free-throw line left corner, free-throw line right corner.
+4. Inspect the projected court lines, drag the points to refine alignment, and select **Confirm**.
+5. The browser establishes WebRTC and requests detection when the analytics channel opens. Team-color initialization runs as frames arrive.
+6. Use the team views, shot filters, and event log to inspect the session. Select **Stop** to close the session and release the video source.
+
+Keep the camera fixed after calibration. A changed view requires recalibration.
+
+### Recorded-video simulation
+
+The simulation control loads `http://127.0.0.1:8000/video/match1.mp4`. Supply your own clip at `backend/sample_videos/match1.mp4`; that file is not part of the tracked application assets. The frontend uses the video element's `captureStream()` method, so simulation also depends on browser support for that API.
+
+## Current integration caveats
+
+- **Streaming localization:** `StreamingShotDetector._setup_localization()` passes `court_spec` to `ShotLocalizer`, whose current constructor does not accept that argument. The exception is caught and the streaming localizer remains unset. Calibration previews use a separate initialization path and can still appear; a successful preview therefore does not establish that live shot localization is working. This interface mismatch needs resolving before relying on live court positions.
+- **Session state:** analytics are held in memory. The dashboard retains up to 200 shots and 50 log entries; there is no persistent game-history store.
+- **Deployment:** the current application shares backend calibration and detection state and is intended for one analysis session. Remote deployment requires additional browser-origin, HTTPS, and WebRTC connectivity configuration.
+
+These instructions describe the checked-in code. They do not represent a verified fresh-environment installation or a completed camera-session test.
+
+## Useful endpoints
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/health` | Service health |
+| POST | `/offer` | WebRTC SDP signaling |
+| GET / POST | `/calibration` | Read or submit court calibration |
+| POST | `/detection/start` | Start detection after calibration |
+| POST | `/detection/stop` | Stop the detection pipeline |
+| POST | `/detection/reset` | Reset detector statistics |
+| GET | `/detection/status` | Calibration and detection state |
+| GET | `/detection/stats` | Current statistics |
+| GET | `/debug/frame_stats` | Inspect the frame buffer |
+
+## Frontend development commands
+
+Run from `frontend/`:
+
 ```bash
-cd ../frontend
-```
-
-Install npm dependencies:
-```bash
-npm install
-```
-
-## Running the Application
-
-### Step 1: Start the Backend Server
-
-From the `backend` directory with your virtual environment activated:
-
-```bash
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
-```
-
-Options:
-- `--reload`: Auto-reload on code changes (development mode)
-- `--host 0.0.0.0`: Allow external connections
-- `--port 8000`: Run on port 8000 (default)
-
-The backend will be available at:
-- Local: http://localhost:8000
-- Health check: http://localhost:8000/health
-
-### Step 2: Start the Frontend Development Server
-
-From the `frontend` directory:
-
-```bash
-npm run dev
-```
-
-The frontend will be available at:
-- Local: http://localhost:5173
-- Network: Check terminal output for network URL
-
-## Using the System
-
-### Workflow
-
-1. **Access the Application**
-   - Open your browser to http://localhost:5173
-
-2. **Set Up Court Calibration**
-   - Click on the calibration interface
-   - Mark 6 points on the basketball court in clockwise order:
-     1. Baseline Left Sideline
-     2. Baseline Left Penalty Box
-     3. Baseline Right Penalty Box
-     4. Baseline Right Sideline
-     5. Free Throw Line Left
-     6. Free Throw Line Right
-   - Submit calibration via POST /calibration endpoint
-
-3. **Start Shot Detection**
-   - Once calibrated, start detection via POST /detection/start
-   - The system will begin processing video frames
-   - Shot statistics will be broadcast in real-time
-
-4. **Monitor Statistics**
-   - View real-time shot data on the dashboard
-   - Check shot locations, success rates, and other metrics
-
-### API Endpoints
-
-#### Health & Debug
-- `GET /health` - Check if backend is running
-- `GET /debug/frame_stats` - View frame buffer statistics
-
-#### Calibration
-- `POST /calibration` - Set 6-point court calibration
-- `GET /calibration` - Get current calibration state
-
-#### Detection Control
-- `POST /detection/start` - Start shot detection (requires calibration)
-- `POST /detection/stop` - Stop detection and revert to dummy broadcast
-- `POST /detection/reset` - Reset shot statistics
-- `GET /detection/status` - Get current detection status
-- `GET /detection/stats` - Get current shot statistics
-
-#### WebRTC
-- `POST /offer` - Handle WebRTC offer from frontend
-
-## Troubleshooting
-
-### Backend Issues
-
-**Import errors or missing modules:**
-```bash
-# Make sure virtual environment is activated
-pip install -r requirements.txt
-```
-
-**Port already in use:**
-```bash
-# Use a different port
-uvicorn main:app --reload --port 8001
-# Update CORS settings in main.py if needed
-```
-
-**YOLO model not found:**
-- The system uses ultralytics YOLO models
-- Models are downloaded automatically on first run
-- Ensure you have internet connection for initial setup
-
-### Frontend Issues
-
-**Dependencies not installed:**
-```bash
-npm install
-```
-
-**Port 5173 already in use:**
-```bash
-# Vite will automatically try the next available port
-# Or specify a different port:
-npm run dev -- --port 5174
-```
-
-**CORS errors:**
-- Check that backend CORS settings allow your frontend URL
-- Default allowed: http://localhost:5173, http://127.0.0.1:5173
-- Update in backend/main.py if using different ports
-
-### WebRTC Issues
-
-**Video not showing:**
-- Check browser console for errors
-- Ensure camera permissions are granted
-- Verify WebRTC is supported in your browser
-- Check that /offer endpoint is responding correctly
-
-## Development Commands
-
-### Backend
-```bash
-# Run with auto-reload (development)
-uvicorn main:app --reload
-
-# Run in production mode
-uvicorn main:app --host 0.0.0.0 --port 8000
-
-# Run tests
-pytest
-
-# Format code
-black .
-```
-
-### Frontend
-```bash
-# Development server
-npm run dev
-
-# Build for production
-npm run build
-
-# Preview production build
-npm run preview
-
-# Type checking
 npm run check
-
-# Continuous type checking
-npm run check:watch
+npm run build
 ```
 
-## Project Structure
-
-```
-basketball_analysis/
-├── backend/
-│   ├── main.py                 # FastAPI application entry point
-│   ├── schema.py               # Pydantic schemas
-│   ├── requirements.txt        # Python dependencies
-│   ├── src/
-│   │   └── utils/
-│   │       └── webrtc_manager.py  # WebRTC connection handling
-│   └── score_detection/        # Shot detection modules
-│       ├── shot_processing_pipeline.py
-│       └── streaming_shot_detector.py
-├── frontend/
-│   ├── package.json            # Node dependencies
-│   ├── src/
-│   │   ├── routes/            # SvelteKit pages
-│   │   │   └── live/v2/       # Live detection interface
-│   │   └── lib/               # Shared components
-│   └── vite.config.js         # Vite configuration
-└── INSTRUCTION.md             # This file
-```
-
-## Current Branch
-
-You are currently on the `shot_localization` branch. This branch includes:
-- 6-point court calibration
-- Shot localization features
-- Enhanced statistics tracking
-- Updated UI components
-
-## Additional Resources
-
-- FastAPI docs: https://fastapi.tiangolo.com
-- SvelteKit docs: https://kit.svelte.dev
-- Ultralytics YOLO: https://docs.ultralytics.com
-- WebRTC: https://webrtc.org
-
-## Support
-
-For issues or questions:
-1. Check the troubleshooting section above
-2. Review console/terminal output for error messages
-3. Ensure all dependencies are correctly installed
-4. Verify correct ports and network configuration
+Model-dependent scripts and tests have their own media and checkpoint requirements; inspect their inputs before running them.
