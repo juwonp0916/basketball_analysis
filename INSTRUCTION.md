@@ -107,4 +107,4 @@ npm run check
 npm run build
 ```
 
-Model-dependent scripts and tests have their own media and checkpoint requirements; inspect their inputs before running them.
+See the [offline tool guide](backend/tools/README.md) for localization utilities, coordinate checks, and their input requirements. Model-dependent scripts and tests have their own media and checkpoint requirements; inspect their inputs before running them.

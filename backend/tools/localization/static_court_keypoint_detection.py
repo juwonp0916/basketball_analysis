@@ -32,16 +32,16 @@ FIBA coordinate system
 Usage
 -----
   # Step 1: explore — identify keypoint indices
-  python static_court_keypoint_detection.py --image shot.jpg --mode explore
+  python backend/tools/localization/static_court_keypoint_detection.py --image shot.jpg --mode explore
 
   # Step 2: localize — verify / adjust DEFAULT_KEYPOINT_TO_FIBA below, then:
-  python static_court_keypoint_detection.py --image shot.jpg --mode localize
-  python static_court_keypoint_detection.py --image shot.jpg --mode localize \\
+  python backend/tools/localization/static_court_keypoint_detection.py --image shot.jpg --mode localize
+  python backend/tools/localization/static_court_keypoint_detection.py --image shot.jpg --mode localize \\
       --mapping my_mapping.json \\
       --shot-model backend/score_detection/weights/new_weight.pt
 
   # Save outputs automatically (skips interactive display):
-  python static_court_keypoint_detection.py --image shot.jpg --mode explore --save
+  python backend/tools/localization/static_court_keypoint_detection.py --image shot.jpg --mode explore --save
 """
 
 import cv2
@@ -52,7 +52,9 @@ import argparse
 import json
 from pathlib import Path
 
-sys.path.insert(0, 'backend/score_detection')
+REPO_ROOT = Path(__file__).resolve().parents[3]
+SCORE_DETECTION_DIR = REPO_ROOT / 'backend' / 'score_detection'
+sys.path.insert(0, str(SCORE_DETECTION_DIR))
 from constants import (
     COURT_WIDTH, COURT_HALF_LENGTH,
     BASKET_X, BASKET_Y,
@@ -569,13 +571,13 @@ def main():
         epilog="""
 Examples:
   # Step 1 — identify keypoint indices:
-  python static_court_keypoint_detection.py --image shot.jpg --mode explore
+  python backend/tools/localization/static_court_keypoint_detection.py --image shot.jpg --mode explore
 
   # Step 2 — compute homography and overlay court lines:
-  python static_court_keypoint_detection.py --image shot.jpg --mode localize
+  python backend/tools/localization/static_court_keypoint_detection.py --image shot.jpg --mode localize
 
   # Step 2 with custom mapping JSON and shooter localisation:
-  python static_court_keypoint_detection.py --image shot.jpg --mode localize \\
+  python backend/tools/localization/static_court_keypoint_detection.py --image shot.jpg --mode localize \\
       --mapping my_mapping.json \\
       --shot-model backend/score_detection/weights/new_weight.pt
 
@@ -591,7 +593,7 @@ Mapping JSON format (keypoint_index → [court_x_m, court_y_m]):
     parser.add_argument("--image", required=True, help="Input image path")
     parser.add_argument(
         "--model",
-        default="backend/score_detection/weights/court_point.pt",
+        default=str(SCORE_DETECTION_DIR / "weights/court_point.pt"),
         help="Path to court keypoint model (default: court_point.pt)",
     )
     parser.add_argument(

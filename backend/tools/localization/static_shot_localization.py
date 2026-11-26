@@ -5,7 +5,7 @@ Simplified shot localization system for testing and validation on single images.
 Uses homography transformation to map player positions from video to court coordinates.
 
 Usage:
-    python static_shot_localization.py --image path/to/image.jpg
+    python backend/tools/localization/static_shot_localization.py --image path/to/image.jpg
 
 Features:
 - Interactive penalty box calibration
@@ -24,11 +24,12 @@ import argparse
 import json
 from pathlib import Path
 
-# Add backend path
-sys.path.insert(0, 'backend/score_detection')
+REPO_ROOT = Path(__file__).resolve().parents[3]
+SCORE_DETECTION_DIR = REPO_ROOT / 'backend' / 'score_detection'
+sys.path.insert(0, str(SCORE_DETECTION_DIR))
 
 import importlib.util as _ilu
-_spec = _ilu.spec_from_file_location("team_statistics", "backend/score_detection/statistics.py")
+_spec = _ilu.spec_from_file_location("team_statistics", SCORE_DETECTION_DIR / "statistics.py")
 _mod = _ilu.module_from_spec(_spec)
 _spec.loader.exec_module(_mod)
 TeamStatistics = _mod.TeamStatistics
@@ -67,11 +68,11 @@ class StaticShotLocalizer:
         # Court configuration
         self.MAP_WIDTH = MAP_WIDTH
         self.MAP_HEIGHT = 140 if court_type == 'half_court' else 280
-        self.court_img_path = f'backend/score_detection/court_img_{"halfcourt" if court_type == "half_court" else ""}.png'
+        self.court_img_path = str(SCORE_DETECTION_DIR / ('court_img_halfcourt.png' if court_type == 'half_court' else 'court_img.png'))
 
         # State variables
         self.calibration_points = None  # Changed from penalty_box_points
-        self.calibration_file = 'court_calibration_6pt.json'
+        self.calibration_file = str(REPO_ROOT / 'court_calibration_6pt.json')
         self.ball_box = None
         self.shooter_box = None
         self.shooter_position = None
@@ -107,7 +108,7 @@ class StaticShotLocalizer:
                             self.calibration_points[:, 1] *= sy
 
                         print("Loaded 6-point calibration:")
-                        sys.path.insert(0, 'backend/score_detection')
+                        sys.path.insert(0, str(SCORE_DETECTION_DIR))
                         from constants import CALIBRATION_LABELS
                         for i, (point, label) in enumerate(zip(self.calibration_points, CALIBRATION_LABELS)):
                             print(f"  {i+1}. {label}: ({point[0]:.1f}, {point[1]:.1f})")
@@ -121,7 +122,7 @@ class StaticShotLocalizer:
 
     def calibrate_court(self):
         """Interactive 6-point court calibration"""
-        sys.path.insert(0, 'backend/score_detection')
+        sys.path.insert(0, str(SCORE_DETECTION_DIR))
         from constants import CALIBRATION_LABELS
 
         points = []
@@ -220,7 +221,7 @@ class StaticShotLocalizer:
 
     def _draw_calibration_points(self, frame, points):
         """Draw calibration points and instructions"""
-        sys.path.insert(0, 'backend/score_detection')
+        sys.path.insert(0, str(SCORE_DETECTION_DIR))
         from constants import CALIBRATION_LABELS
 
         colors = [
@@ -438,7 +439,7 @@ class StaticShotLocalizer:
         print(f"Shooter bbox: {self.shooter_box['bbox']}")
         print(f"Foot pixel position: ({foot_x:.1f}, {foot_y:.1f})")
         print(f"\nCalibration points (pixels):")
-        sys.path.insert(0, 'backend/score_detection')
+        sys.path.insert(0, str(SCORE_DETECTION_DIR))
         from constants import CALIBRATION_LABELS
         for i, (pt, label) in enumerate(zip(self.calibration_points, CALIBRATION_LABELS)):
             print(f"  {i+1}. {label}: ({pt[0]:.1f}, {pt[1]:.1f})")
@@ -468,7 +469,7 @@ class StaticShotLocalizer:
         print(f"Court position: ({court_coords[0]:.2f}m, {court_coords[1]:.2f}m)")
 
         # Validate bounds (court half-court: X ∈ [0, 15], Y ∈ [0, 14])
-        sys.path.insert(0, 'backend/score_detection')
+        sys.path.insert(0, str(SCORE_DETECTION_DIR))
         from constants import COURT_WIDTH, COURT_HALF_LENGTH
 
         if not (0 <= court_coords[0] <= COURT_WIDTH and 0 <= court_coords[1] <= COURT_HALF_LENGTH):
@@ -570,7 +571,7 @@ class StaticShotLocalizer:
             court_x, court_y = self.court_position
 
             # Use the new SVG-based court renderer
-            sys.path.insert(0, 'backend/score_detection')
+            sys.path.insert(0, str(SCORE_DETECTION_DIR))
             from court_renderer import CourtRenderer
             import matplotlib.pyplot as plt
             import tempfile
@@ -619,7 +620,7 @@ class StaticShotLocalizer:
                 return img_display
         else:
             # No shot location - just draw empty court
-            sys.path.insert(0, 'backend/score_detection')
+            sys.path.insert(0, str(SCORE_DETECTION_DIR))
             from court_renderer import CourtRenderer
             import matplotlib.pyplot as plt
             import tempfile
@@ -782,14 +783,14 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python static_shot_localization.py --image shot_frame.jpg
-  python static_shot_localization.py --image shot.jpg --court-type full_court
+  python backend/tools/localization/static_shot_localization.py --image shot_frame.jpg
+  python backend/tools/localization/static_shot_localization.py --image shot.jpg --court-type full_court
         """
     )
 
     parser.add_argument('--image', required=True, help='Path to input image')
     parser.add_argument('--model',
-                       default='backend/score_detection/weights/new_weight.pt',
+                       default=str(SCORE_DETECTION_DIR / 'weights/new_weight.pt'),
                        help='Path to YOLO model weights')
     parser.add_argument('--court-type',
                        default='half_court',

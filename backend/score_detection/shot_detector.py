@@ -2,7 +2,6 @@
 from PIL import Image
 from ultralytics import YOLO
 import cv2
-import cvzone
 import math
 import numpy as np
 import os

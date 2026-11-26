@@ -64,7 +64,11 @@ basketball_analysis/
 │   │   └── config.yaml                 # Model path and inference device
 │   ├── src/utils/webrtc_manager.py     # Connections and frame ingestion
 │   ├── scripts/                        # Offline processing utilities
-│   └── tests/                          # Team-detection checks
+│   ├── tests/                          # Team-detection checks
+│   └── tools/                          # Offline utilities and diagnostics
+│       ├── localization/               # Image/video localization and keypoints
+│       ├── diagnostics/                # Court and coordinate checks
+│       └── visualization/              # Clustering visualization experiment
 ├── frontend/src/
 │   ├── routes/live/v4/+page.svelte     # Main analysis dashboard
 │   └── lib/                            # Charts, calibration, WebRTC utilities
@@ -72,7 +76,7 @@ basketball_analysis/
 └── INSTRUCTION.md                     # Local setup and usage
 ```
 
-The tree highlights the live application. Additional root-level scripts and media support calibration experiments and offline development.
+The tree highlights the live application. See the [tool guide](backend/tools/README.md) for offline localization commands and diagnostics. Supporting media and calibration data remain in their existing locations.
 
 ## Run locally
 

@@ -11,6 +11,7 @@ Connects the streaming shot detector to the WebRTC infrastructure, handling:
 import asyncio
 import logging
 import os
+import shlex
 import time
 from pathlib import Path
 from typing import Optional, Callable, List, Tuple, Any
@@ -801,7 +802,11 @@ class ShotProcessingPipeline:
                 "frame_dims_actual": [img.shape[1], img.shape[0]],
                 "note": (
                     "Use this frame with: "
-                    f"python static_shot_localization.py --image {img_path}"
+                    + shlex.join([
+                        "python",
+                        str(Path(__file__).resolve().parents[1] / "tools/localization/static_shot_localization.py"),
+                        "--image", str(img_path),
+                    ])
                 ),
             }
             with open(meta_path, "w") as f:

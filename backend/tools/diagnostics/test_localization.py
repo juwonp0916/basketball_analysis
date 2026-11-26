@@ -10,15 +10,17 @@ import cv2
 from pathlib import Path
 from collections import Counter
 
-sys.path.insert(0, 'backend/score_detection')
+REPO_ROOT = Path(__file__).resolve().parents[3]
+SCORE_DETECTION_DIR = REPO_ROOT / 'backend' / 'score_detection'
+sys.path.insert(0, str(SCORE_DETECTION_DIR))
 
 from constants import (
     COURT_WIDTH, COURT_HALF_LENGTH, BASKET_Y,
     CALIBRATION_LABELS, CALIBRATION_POINTS_FIBA
 )
 
-CALIBRATION_FILE = 'court_calibration_6pt.json'
-VIDEO_PATH = 'backend/score_detection/video1.mp4'
+CALIBRATION_FILE = str(REPO_ROOT / 'court_calibration_6pt.json')
+VIDEO_PATH = str(SCORE_DETECTION_DIR / 'video1.mp4')
 
 
 def compute_homography(src_pts, dst_pts, method_name, method=cv2.RANSAC, threshold=0.1):
@@ -88,8 +90,9 @@ def test_video_localization(H, cal_dims, video_path, max_frames=300, sample_ever
     import yaml
 
     stats = TeamStatistics(quarters=[float('inf')])
-    config = yaml.safe_load(open('backend/score_detection/config.yaml'))
-    weights = 'backend/score_detection/' + config['weights_path']
+    with (SCORE_DETECTION_DIR / 'config.yaml').open() as config_file:
+        config = yaml.safe_load(config_file)
+    weights = str(SCORE_DETECTION_DIR / config['weights_path'])
     print(f"\nLoading model: {weights}")
     model = YOLO(weights, verbose=False)
 
@@ -198,7 +201,8 @@ if __name__ == '__main__':
         test_video_localization(H, cal_dims, VIDEO_PATH)
     else:
         print(f"\nVideo not found: {VIDEO_PATH}")
-        for v in ['backend/score_detection/shots.mp4', 'backend/score_detection/shot.mp4']:
+        for filename in ['shots.mp4', 'shot.mp4']:
+            v = str(SCORE_DETECTION_DIR / filename)
             if Path(v).exists():
                 test_video_localization(H, cal_dims, v)
                 break

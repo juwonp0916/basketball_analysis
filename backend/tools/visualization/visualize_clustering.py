@@ -1,4 +1,3 @@
-from score_detection.team_detector import StreamingTeamDetector
 import cv2
 import numpy as np
 import colorsys
@@ -7,9 +6,13 @@ import matplotlib.pyplot as plt
 from sklearn.cluster import KMeans
 from ultralytics import YOLO
 
-# Try importing the TeamDetector logic from backend if possible
 import sys
-sys.path.append(os.path.join(os.path.dirname(__file__), 'backend'))
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(REPO_ROOT / 'backend'))
+
+from score_detection.team_detector import StreamingTeamDetector
 
 
 def hsv_to_rgb(h, s, v):
@@ -25,7 +28,7 @@ def hsv_to_hex(hsv):
 
 
 def main():
-    video_path = 'backend/sample_videos/video1.mp4'
+    video_path = str(REPO_ROOT / 'backend/sample_videos/video1.mp4')
     if not os.path.exists(video_path):
         print(f"Error: {video_path} not found.")
         return
@@ -34,7 +37,7 @@ def main():
     output_video = 'team_clustering_output.mp4'
 
     print("Loading YOLO model...")
-    model = YOLO('yolov8n.pt')  # Standard YOLO for person detection
+    model = YOLO(str(REPO_ROOT / 'yolov8n.pt'))  # Standard YOLO for person detection
 
     detector = StreamingTeamDetector()
 

@@ -6,7 +6,7 @@ Combines shot detection with homography-based court localization to track all sh
 throughout a video and generate comprehensive shot charts.
 
 Usage:
-    python video_shot_localization.py --video path/to/video.mp4
+    python backend/tools/localization/video_shot_localization.py --video path/to/video.mp4
 
 Features:
 - Interactive 6-point FIBA court calibration
@@ -25,8 +25,9 @@ import argparse
 import json
 from pathlib import Path
 
-# Add backend path
-sys.path.insert(0, 'backend/score_detection')
+REPO_ROOT = Path(__file__).resolve().parents[3]
+SCORE_DETECTION_DIR = REPO_ROOT / 'backend' / 'score_detection'
+sys.path.insert(0, str(SCORE_DETECTION_DIR))
 
 from shot_detector import ShotDetector
 from constants import CALIBRATION_LABELS
@@ -72,7 +73,7 @@ class VideoShotLocalizer:
 
         # Calibration
         self.calibration_points = None
-        self.calibration_file = 'court_calibration_6pt.json'
+        self.calibration_file = str(REPO_ROOT / 'court_calibration_6pt.json')
 
     def load_or_calibrate(self):
         """Load existing calibration or run interactive calibration"""
@@ -302,8 +303,8 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python video_shot_localization.py --video game_footage.mp4
-  python video_shot_localization.py --video game.mp4 --show-vid
+  python backend/tools/localization/video_shot_localization.py --video game_footage.mp4
+  python backend/tools/localization/video_shot_localization.py --video game.mp4 --show-vid
 
 Output:
   - output/{video}_shots_data.json: Complete shot data with timestamps, locations, zones
